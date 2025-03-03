@@ -1,0 +1,144 @@
+---
+title: "Waterlogging qPCR Analysis"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+
+```
+
+```{r libraries, include = FALSE}
+library(data.table)
+```
+
+```{r variables}
+data_columns <- c(
+    "Well", "Target", "Content", "Replicate", "Sample", "Dilution",
+    "Cq", "Cq Mean", "Cq Std. Dev", "Starting Quantity (SQ)"
+)
+
+```
+
+## Load qPCR Data
+
+```{r data}
+#' Load qPCR data from a csv file
+load_qpcr_data <- function(file_path, header_rows = 0, columns = data_columns) {
+    data <- fread(file_path, skip = header_rows, select = columns)
+    setnames(
+        data,
+        c("Cq Mean", "Cq Std. Dev", "Starting Quantity (SQ)"),
+        c("Cq_mean", "Cq_sd", "Concentration")
+    )
+    # [
+    #     ,
+    #     list(
+    #         Cq_mean = "Cq mean", Cq_sd = "Cq Std. Dev",
+    #         Concentration = "Starting Quantity (SQ)"
+    #     )
+    # ]
+    plate <- list(
+        samples   = data[grepl("Unkn", Content)],
+        standards = data[grepl("Std", Content)],
+        ntcs      = data[grepl("NTC", Content)]
+    )
+    plate$samples$Sample <- as.integer(plate$samples$Sample)
+    plate$samples$Concentration <- 1 / plate$samples$Dilution
+    return(plate)
+}
+
+plate_1 <- load_qpcr_data("Data/2025-02-26 plate 1 roots ITS.csv", 19)
+plate_1$samples
+```
+
+## Remove triplicate outliers
+
+Probably the best method for determining outliers is to calculate $\Delta C_q$ between each triplicate and the median and then remove outliers over a threshold.
+
+Samples above a maximum $C_q$ value are also removed.
+
+If only a single replicate from a triplicate remains, the sample is removed and the corresponding sample from the other dilution is also removed because efficiency cannot be calculated.
+
+Removed outliers are listed in a dataframe.
+
+```{r remove_outliers}
+
+#' Remove outliers from a qPCR plate if the Cq standard deviation is above a threshold
+#' or the Cq value is above a maximum value
+#' @param data A data.table containing qPCR data
+#' @param threshold The standard deviation threshold
+#' @param max_cq The maximum Cq value to keep
+#' @return A list containing the cleaned data and a data.table of outliers
+#' 
+remove_outliers <- function(data, threshold = 0.5, max_cq = 35) {
+    outliers <- data[,
+        list(
+            Well = Well,
+            Sample = Sample,
+            Target = Target,
+            Dilution = Dilution,
+            Cq = Cq,
+            Outlier = ifelse(
+                abs(Cq - median(Cq)) > threshold | Cq > max_cq,
+                TRUE,
+                FALSE
+            )
+        ),
+        by = Replicate
+    ][order(Sample)]
+
+    # Remove singletons
+    outliers[,
+        Singleton := ifelse(sum(Outlier) > 1, TRUE, FALSE),
+        by = Replicate
+    ]
+
+    # Remove corresponding samples from other dilutions
+    outliers[,
+        Corresponding := ifelse(sum(Outlier, Singleton) > 3, TRUE, FALSE),
+        by = Sample
+    ]
+
+    # Remove outliers from data
+    outliers <- outliers[Outlier == TRUE | Singleton == TRUE | Corresponding == TRUE]
+    data <- data[!Well %in% outliers]
+
+    return(list(data = data, outliers = outliers))
+}
+
+remove_outliers(plate_1$samples)
+```
+
+
+
+```{r summary_statistics}
+#' Calculate the efficiency of a qPCR reaction based on the equation
+#' \deqn{E = 10^{-1/slope}}
+efficiency <- function(slope) {
+    efficiency <- 10^(-1 / slope)
+    return(efficiency)
+}
+
+#' Calculate summary statistics for each sample in a qPCR plate
+calculate_summary_statistics <- function(data) {
+    summary_statistics <- data[
+        ,
+        list(
+            Target = Target[1],
+            Slope = lm(Cq ~ log10(Concentration))$coefficients[2],
+            Intercept = lm(Cq ~ log10(Concentration))$coefficients[1],
+            R2 = summary(lm(Cq ~ log10(Concentration)))$r.squared,
+            Efficiency = efficiency(lm(Cq ~ log10(Concentration))$coefficients[2])
+        ),
+        by = Sample
+    ][order(Sample)]
+    return(summary_statistics)
+}
+
+# Calculate summary statistics for each sample in plate 1 sorted by sample
+plate_1$stats <- calculate_summary_statistics(plate_1$samples)
+plate_1$stats
+
+# Add efficiency to the plate 1 samples
+plate_1$samples <- merge(plate_1$samples, plate_1$stats, by = "Sample")
+```
