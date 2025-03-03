@@ -9,6 +9,7 @@ output: html_document
 
 ```{r libraries, include = FALSE}
 library(data.table)
+library(ggpubr)
 ```
 
 ```{r variables}
@@ -22,7 +23,13 @@ data_columns <- c(
 ## Load qPCR Data
 
 ```{r data}
+
 #' Load qPCR data from a csv file
+#' @param file_path The path to the csv file
+#' @param header_rows The number of header rows to skip
+#' @param columns The columns to select
+#' @return A list containing the samples, standards, and NTCs
+#'
 load_qpcr_data <- function(file_path, header_rows = 0, columns = data_columns) {
     data <- fread(file_path, skip = header_rows, select = columns)
     setnames(
@@ -30,13 +37,6 @@ load_qpcr_data <- function(file_path, header_rows = 0, columns = data_columns) {
         c("Cq Mean", "Cq Std. Dev", "Starting Quantity (SQ)"),
         c("Cq_mean", "Cq_sd", "Concentration")
     )
-    # [
-    #     ,
-    #     list(
-    #         Cq_mean = "Cq mean", Cq_sd = "Cq Std. Dev",
-    #         Concentration = "Starting Quantity (SQ)"
-    #     )
-    # ]
     plate <- list(
         samples   = data[grepl("Unkn", Content)],
         standards = data[grepl("Std", Content)],
@@ -63,13 +63,13 @@ Removed outliers are listed in a dataframe.
 
 ```{r remove_outliers}
 
-#' Remove outliers from a qPCR plate if the Cq standard deviation is above a threshold
+#' Remove outliers from a qPCR plate with Cq standard deviation > threshold
 #' or the Cq value is above a maximum value
 #' @param data A data.table containing qPCR data
 #' @param threshold The standard deviation threshold
 #' @param max_cq The maximum Cq value to keep
 #' @return A list containing the cleaned data and a data.table of outliers
-#' 
+#'
 remove_outliers <- function(data, threshold = 0.5, max_cq = 35) {
     outliers <- data[,
         list(
@@ -79,7 +79,7 @@ remove_outliers <- function(data, threshold = 0.5, max_cq = 35) {
             Dilution = Dilution,
             Cq = Cq,
             Outlier = ifelse(
-                abs(Cq - median(Cq)) > threshold | Cq > max_cq,
+                abs(Cq - median(Cq)) > threshold | Cq > max_cq | is.na(Cq),
                 TRUE,
                 FALSE
             )
@@ -101,35 +101,86 @@ remove_outliers <- function(data, threshold = 0.5, max_cq = 35) {
 
     # Remove outliers from data
     outliers <- outliers[Outlier == TRUE | Singleton == TRUE | Corresponding == TRUE]
-    data <- data[!Well %in% outliers]
+    data <- data[!Well %in% outliers$Well]
 
-    return(list(data = data, outliers = outliers))
+    return(list(samples = data, outliers = outliers))
 }
 
-remove_outliers(plate_1$samples)
+outliers <- remove_outliers(plate_1$samples)
+plate_1$samples <- outliers$samples
+plate_1$outliers <- outliers$outliers
+plate_1$outliers
 ```
 
+## Standard curve
 
+```{r standard_curve}
+
+#' Calculate the standard curve for a qPCR plate
+#' @param data A data.table containing qPCR standard curve data
+#' @return A list containing the intercept, slope, R^2, and efficiency
+#'
+calculate_standard_curve <- function(data) {
+    model <- lm(Cq ~ log10(Concentration), data)
+    intercept <- model$coefficients[1]
+    slope <- model$coefficients[2]
+    r_squared <- summary(model)$r.squared
+    efficiency <- 10^(-1 / slope)
+    return(list(intercept = intercept, slope = slope, r_squared = r_squared, efficiency = efficiency))
+}
+
+# Remove outliers from the standards
+outliers <- remove_outliers(plate_1$standards)
+plate_1$standards <- outliers$samples
+
+# Calculate the standard curve
+plate_1$standard_curve <- calculate_standard_curve(plate_1$standards)
+plate_1$standard_curve
+
+# Plot standard curve
+plate_1$standards[, log10_concentration := log10(Concentration)]
+ggscatter(
+    plate_1$standards, x = "log10_concentration", y = "Cq",
+    add = "reg.line", conf.int = TRUE
+) +
+    stat_regline_equation(
+        aes(label = paste(after_stat(eq.label), after_stat(rr.label), sep = "~~~~")),
+        label.x = -2, label.y = 30)
+
+```
+
+## Summary statistics
 
 ```{r summary_statistics}
+
 #' Calculate the efficiency of a qPCR reaction based on the equation
 #' \deqn{E = 10^{-1/slope}}
+#' @param slope The slope between the Cq and log10 concentration 
+#' @return The efficiency of the qPCR reaction
+#'
 efficiency <- function(slope) {
     efficiency <- 10^(-1 / slope)
     return(efficiency)
 }
 
 #' Calculate summary statistics for each sample in a qPCR plate
+#' @param data A data.table containing qPCR data
+#' @return A data.table containing the summary statistics
+#'
 calculate_summary_statistics <- function(data) {
-    summary_statistics <- data[
-        ,
-        list(
-            Target = Target[1],
-            Slope = lm(Cq ~ log10(Concentration))$coefficients[2],
-            Intercept = lm(Cq ~ log10(Concentration))$coefficients[1],
-            R2 = summary(lm(Cq ~ log10(Concentration)))$r.squared,
-            Efficiency = efficiency(lm(Cq ~ log10(Concentration))$coefficients[2])
-        ),
+    summary_statistics <- data[,
+        {
+            model <- lm(Cq ~ log10(Concentration))
+            intercept <- model$coefficients[1]
+            slope <- model$coefficients[2]
+            list(
+                Target = Target[1],
+                Intercept = intercept,
+                Slope = slope,
+                R2 = summary(model)$r.squared,
+                Efficiency = efficiency(slope)
+            )
+        },
         by = Sample
     ][order(Sample)]
     return(summary_statistics)
@@ -140,5 +191,5 @@ plate_1$stats <- calculate_summary_statistics(plate_1$samples)
 plate_1$stats
 
 # Add efficiency to the plate 1 samples
-plate_1$samples <- merge(plate_1$samples, plate_1$stats, by = "Sample")
+plate_1$samples <- merge(plate_1$samples, plate_1$stats, by = c("Sample", "Target"))
 ```
