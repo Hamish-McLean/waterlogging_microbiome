@@ -1,6 +1,10 @@
 ---
 title: "Waterlogging qPCR Analysis"
-output: html_document
+output: 
+  html_document:
+    mathjax: default
+    df_print: kable
+    highlight: haddock
 ---
 
 ```{r setup, include = FALSE}
@@ -11,16 +15,20 @@ output: html_document
 library(data.table)
 library(ggpubr)
 library(kableExtra)
+library(knitr)
+library(latex2exp)
+library(rmarkdown)
 ```
 
 Load qPCR data from csv files exported from the qPCR machine.
 Separate the qPCR data into samples, standards, and NTCs.
-Remove outliers from the triplicates based on a standard deviation threshold and maximum Cq value.
+Remove outliers from the triplicates based on a standard deviation threshold and maximum $C_q$ value.
 Caclulate standard curves for the standards on each plate.
 Calculate efficiency of each qPCR reactions.
 
 ```{r variables}
-
+cq_threshold <- 0.5 # Threshold for difference between triplicate Cq values
+max_cq       <- 35 # Maximum Cq value to keep
 ```
 
 ## Load qPCR Data
@@ -35,43 +43,61 @@ data_columns <- c(
   "Cq", "Starting Quantity (SQ)"
 )
 
+# Define sample sources
+roots <- list(01:10, 21:30, 41:50)
+soil  <- list(11:20, 31:40, 51:60)
+
 #' Load qPCR data from a csv file
 #' @param file_path The path to the csv file
 #' @param header_rows The number of header rows to skip
 #' @param columns The columns to select
 #' @return A list containing the samples, standards, and NTCs as data.tables
 #'
-load_qpcr_data <- function(file_path, header_rows = 0, columns = data_columns) {
+load_qpcr_data <- function(file_path, plate, header_rows = 19, columns = data_columns) {
 	data <- fread(file_path, skip = header_rows, select = columns)
 	setnames(data, "Starting Quantity (SQ)", "Concentration")
-	data[, Type := fcase(
+  data[, Plate := plate]
+	data[, Content := fcase(
 		startsWith(Content, "Unkn"), "Sample",
 		startsWith(Content, "Std"), "Standard",
 		startsWith(Content, "NTC"), "NTC"
 	)]
+  data[Content == "Sample", Type := fcase(
+    Sample %in% unlist(roots), "Root",
+    Sample %in% unlist(soil), "Soil"
+  )]
+  data[Content == "Standard", Type := fcase(
+    startsWith(Sample, "Sr"), "Root",
+    startsWith(Sample, "Ss"), "Soil"
+  )]
   # Add leading 0 to samples for sorting
-  data[Type == "Sample", Sample := sprintf("%02d", as.numeric(Sample))]
+  data[Content == "Sample", Sample := sprintf("%02d", as.numeric(Sample))]
   # Calculate sample concentration
-  data[Type == "Sample", Concentration := 1 / as.numeric(Dilution)]
+  data[, Dilution := as.numeric(Dilution)]
+  data[Content == "Sample", Concentration := 1 / as.numeric(Dilution)]
+  data[Content == "Standard", Dilution := 1 / as.numeric(Concentration)]
+  data[, log10_concentration := log10(Concentration)]
   plate <- list(
+    plate     = plate,
 		data 	 	  = data,
-    samples   = data[Type == "Sample"],
-    standards = data[Type == "Standard"],
-    ntcs      = data[Type == "NTC"]
+    samples   = data[Content == "Sample"],
+    standards = data[Content == "Standard"],
+    ntcs      = data[Content == "NTC"]
   )
   return(plate)
 }
 
-plate_1 <- load_qpcr_data("Data/2025-02-26 plate 1 roots ITS.csv", 19)
-plate_2 <- load_qpcr_data("Data/2025-03-06 plate 2 roots 16S.csv", 19)
+plate_1 <- load_qpcr_data("Data/2025-02-26 plate 1 roots ITS.csv", 1)
+plate_2 <- load_qpcr_data("Data/2025-03-06 plate 2 roots 16S.csv", 2)
+plate_3 <- load_qpcr_data("Data/2025-03-10 plate 3 soil ITS.csv", 3)
 
-kable(head(plate_2$samples))
+kable(head(plate_3$samples))
 
 ```
 
 ## Remove triplicate outliers
 
-Calculate $\Delta C_q$ between each triplicate and the median and then remove outliers over a threshold.
+Remove outliers with $\Delta C_q >$ `r cq_threshold` between each triplicate and the median.
 Samples above a maximum $C_q$ value are also removed.
 If only a single replicate from a triplicate remains, the sample is removed and 
 the corresponding sample from the other dilution is also removed because 
@@ -90,62 +116,72 @@ Removed outliers are listed in a dataframe.
 #' @param max_cq The maximum Cq value to keep
 #' @return The data.table with an additional column "Outlier" containing the flag
 #'
-flag_outliers <- function(data, threshold = 0.5, max_cq = 35) {
+flag_outliers <- function(data, threshold = cq_threshold, cq_max = max_cq) {
   outliers <- copy(data)
-	
+
 	# Group by replicate and flag outliers
 	outliers[,
 		Outlier := fcase(
 			abs(Cq - median(Cq)) > threshold, "outlier",
-			Cq > max_cq, "high Cq",
+			Cq > cq_max, "high Cq",
 			is.na(Cq), "missing Cq",
 			default = "ok"
 		),
-    by = .(Target, Type, Replicate)
+    by = .(Target, Content, Replicate)
   ]
 
   # Remove singletons
   outliers[,
-    Outlier := ifelse(is.na(Outlier) & sum(is.na(Outlier)) == 1, "singleton", Outlier),
-    by = .(Target, Type, Replicate)
+    Outlier := ifelse(
+      Outlier == "ok" & sum(Outlier == "ok") == 1,
+      "singleton", Outlier
+    ),
+    by = .(Target, Content, Replicate)
   ]
 
   # Remove corresponding samples from other dilutions
   outliers[,
     Outlier := ifelse(
-			is.na(Outlier) & sum(is.na(Outlier)) <= .N / 2,
+			Outlier == "ok" & sum(Outlier == "ok") <= .N / 2,
 			"insufficient data", Outlier
 		),
-    by = .(Target, Type, Sample)
+    by = .(Target, Content, Sample)
   ]
 
   return(outliers)
 }
 
+# Flaq outliers
 plate_1$data <- flag_outliers(plate_1$data)
-kable(plate_1$data[Outlier != "ok"][order(Content)], digits = 2)
+kable(plate_1$data[Outlier != "ok"][order(Sample)], digits = 2)
 
 plate_2$data <- flag_outliers(plate_2$data)
-kable(plate_2$data[Outlier != "ok"][order(Content)], digits = 2)
+kable(plate_2$data[Outlier != "ok"][order(Sample)], digits = 2)
+
+plate_3$data <- flag_outliers(plate_3$data)
+kable(plate_3$data[Outlier != "ok"][order(Sample)], digits = 2)
 
 
 # Remove outliers
-plate_1$samples <- plate_1$data[Type == "Sample" & Outlier == "ok"]
-plate_1$standards <- plate_1$data[Type == "Standard" & Outlier == "ok"]
+plate_1$samples <- plate_1$data[Content == "Sample" & Outlier == "ok"]
+plate_1$standards <- plate_1$data[Content == "Standard" & Outlier == "ok"]
 
-plate_2$samples <- plate_2$data[Type == "Sample" & Outlier == "ok"]
-plate_2$standards <- plate_2$data[Type == "Standard" & Outlier == "ok"]
+plate_2$samples <- plate_2$data[Content == "Sample" & Outlier == "ok"]
+plate_2$standards <- plate_2$data[Content == "Standard" & Outlier == "ok"]
+
+plate_3$samples <- plate_3$data[Content == "Sample" & Outlier == "ok"]
+plate_3$standards <- plate_3$data[Content == "Standard" & Outlier == "ok"]
 ```
 
-## Summary statistics
+## Efficiency
 
-Fit a linear model between the $C_q$ and $\log_{10}$ concentration for each sample in a qPCR plate.
+Fit a linear model to $C_q \sim \log_{10}(concentration)$ for each sample in a qPCR plate.
 Calculate PCR efficiency based on the equation 
 $$E = 10^{-1/slope}$$
 where $slope$ is the slope of the linear model.
 Perfect efficiency is 2.
 
-```{r summary_statistics}
+```{r efficiency}
 
 #' Calculate the efficiency of a qPCR reaction based on the equation
 #' \deqn{E = 10^{-1/slope}}
@@ -177,7 +213,7 @@ calculate_summary_statistics <- function(data) {
       )
     },
     by = Sample
-  ][order(as.numeric(Sample)]
+  ][order(as.numeric(Sample))]
   return(summary_statistics)
 }
 
@@ -186,49 +222,114 @@ plate_1$stats <- calculate_summary_statistics(plate_1$samples)
 kable(plate_1$stats, digits = 2)
 plate_2$stats <- calculate_summary_statistics(plate_2$samples)
 kable(plate_2$stats, digits = 2)
+plate_3$stats <- calculate_summary_statistics(plate_3$samples)
+kable(plate_3$stats, digits = 2)
 
 # Add stats to samples
 plate_1$samples <- merge(plate_1$samples, plate_1$stats, by = c("Sample", "Target"))
 plate_2$samples <- merge(plate_2$samples, plate_2$stats, by = c("Sample", "Target"))
+plate_3$samples <- merge(plate_3$samples, plate_3$stats, by = c("Sample", "Target"))
 ```
 
 ## Standard curve
 
 Calculate the standard curve for each qPCR plate.
-The standard curve is calculated by fitting a linear model between the $C_q$ and $\log_{10}$ concentration.
+The standard curve is calculated by fitting a linear model to
+$C_q \sim \log_{10} (concentration).
 
 ```{r standard_curve}
+
+# Remove dilutions < 10^-6 from standards
+plate_1$standards <- plate_1$standards[Concentration > 1e-6]
+plate_2$standards <- plate_2$standards[Concentration > 1e-6]
+plate_3$standards <- plate_3$standards[Concentration > 1e-6]
 
 #' Calculate the standard curve for a qPCR plate
 #' @param data A data.table containing qPCR standard curve data
 #' @return A list containing the intercept, slope, R^2, and efficiency
 #'
 calculate_standard_curve <- function(data) {
-  model <- lm(Cq ~ log10(Concentration), data)
-  intercept <- model$coefficients[1]
-  slope <- model$coefficients[2]
-  r_squared <- summary(model)$r.squared
-  efficiency <- efficiency(slope)
-  return(list(intercept = intercept, slope = slope, r_squared = r_squared, efficiency = efficiency))
+  results <- data[, {
+    model <- lm(Cq ~ log10(Concentration))
+    intercept <- model$coefficients[1]
+    slope <- model$coefficients[2]
+    r_squared <- summary(model)$r.squared
+    efficiency <- efficiency(slope)
+    list(
+      Intercept = intercept,
+      Slope = slope,
+      R2 = r_squared,
+      Efficiency = efficiency
+    )
+  }, by = Type]
+  return(results)
 }
-
-# Remove outliers from the standards
-outliers <- remove_outliers(plate_1$standards)
-plate_1$standards <- outliers$samples
 
 # Calculate the standard curve
 plate_1$standard_curve <- calculate_standard_curve(plate_1$standards)
 plate_1$standard_curve
+plate_2$standard_curve <- calculate_standard_curve(plate_2$standards)
+plate_2$standard_curve
+plate_3$standard_curve <- calculate_standard_curve(plate_3$standards)
+plate_3$standard_curve
 
-# Plot standard curve
-plate_1$standards[, log10_concentration := log10(Concentration)]
-ggscatter(
-  plate_1$standards, x = "log10_concentration", y = "Cq",
-  add = "reg.line", conf.int = TRUE
-) +
-  stat_regline_equation(
-    aes(label = paste(after_stat(eq.label), after_stat(rr.label), sep = "~~~~")),
-    label.x = -2, label.y = 30
-  )
+#' Plot standard curve
+plot_standard_curve <- function(data, standard_curve) {
+  types <- unique(data$Type)
+  plots <- list()
+  for (type in types) {
+    plots[[type]] <- ggscatter(
+      data[Type == type], x = "log10_concentration", y = "Cq",
+      add = "reg.line", conf.int = TRUE
+    ) +
+      stat_regline_equation(
+        aes(label = paste(
+          after_stat(eq.label), after_stat(rr.label), sep = "~~~~"
+        )),
+        label.x = -2.5, label.y = 32
+      ) +
+      ggtitle(paste0("Plate ", data$Plate[1], " ", type, " ", data$Target[1])) +
+      xlab(TeX("$\\log_{10}(Concentration)$")) +
+      ylab(TeX("$C_q$"))
+  }
+  combined_plot <- ggarrange(plotlist = plots)
+  return(combined_plot)
+}
+
+plot_standard_curve(plate_1$standards, plate_1$standard_curve)
+plot_standard_curve(plate_2$standards, plate_2$standard_curve)
+plot_standard_curve(plate_3$standards, plate_3$standard_curve)
+
+```
+
+## Efficiency adjusted $C_q$
+
+$C_q$ can be adjusted for efficiency by the equation:
+
+$$
+C_{q, adjusted}=\log_{2}\!\left(E^{C_{q}}\right)
+$$
+
+Where $E$ is the efficiency of the sample.
+
+To calculate adjusted copy number, a new standard curve is fit to the adjusted $C_q$ values os the standards.
+
+```{r efficiency_adjustment}
+
+#' Calculate the efficiency adjusted Cq values using the equation
+#' \deqn{C_{q, adjusted}=\log_{2}\!\left(E^{C_{q}}\right)}
+#' @param data A data.table containing qPCR data
+#' @return A data.table containing the efficiency adjusted Cq values
+#' 
+efficiency_adjustment <- function(data) {
+  data <- copy(data)
+  data[, Cq_adjusted := ifelse(Efficiency < 2, log2(Efficiency^Cq), Cq)]
+  return(data)
+}
+
+# Calculate efficiency adjusted Cq values
+plate_1$samples <- efficiency_adjustment(plate_1$samples)
+plate_2$samples <- efficiency_adjustment(plate_2$samples)
+plate_3$samples <- efficiency_adjustment(plate_3$samples)
 
 ```
