@@ -89,9 +89,10 @@ load_qpcr_data <- function(file_path, plate, header_rows = 19, columns = data_co
 
 plate_1 <- load_qpcr_data("Data/2025-02-26 plate 1 roots ITS.csv", 1)
 plate_2 <- load_qpcr_data("Data/2025-03-06 plate 2 roots 16S.csv", 2)
-plate_3 <- load_qpcr_data("Data/2025-03-10 plate 3 soil ITS.csv", 3)
+plate_3 <- load_qpcr_data("Data/2025-03-10 plate 3 soil ITS.csv",  3)
+plate_4 <- load_qpcr_data("Data/2025-03-17 plate 4 soil 16S.csv",  4)
 
-kable(head(plate_3$samples))
+kable(head(plate_4$samples))
 
 ```
 
@@ -142,9 +143,9 @@ flag_outliers <- function(data, threshold = cq_threshold, cq_max = max_cq) {
   # Remove corresponding samples from other dilutions
   outliers[,
     Outlier := ifelse(
-			Outlier == "ok" & sum(Outlier == "ok") <= .N / 2,
-			"insufficient data", Outlier
-		),
+      Outlier == "ok" & sum(Outlier == "ok") <= .N / 2,
+      "insufficient data", Outlier
+    ),
     by = .(Target, Content, Sample)
   ]
 
@@ -161,16 +162,22 @@ kable(plate_2$data[Outlier != "ok"][order(Sample)], digits = 2)
 plate_3$data <- flag_outliers(plate_3$data)
 kable(plate_3$data[Outlier != "ok"][order(Sample)], digits = 2)
 
+plate_4$data <- flag_outliers(plate_4$data)
+kable(plate_4$data[Outlier != "ok"][order(Sample)], digits = 2)
 
 # Remove outliers
-plate_1$samples <- plate_1$data[Content == "Sample" & Outlier == "ok"]
+plate_1$samples   <- plate_1$data[Content == "Sample" & Outlier == "ok"]
 plate_1$standards <- plate_1$data[Content == "Standard" & Outlier == "ok"]
 
-plate_2$samples <- plate_2$data[Content == "Sample" & Outlier == "ok"]
+plate_2$samples   <- plate_2$data[Content == "Sample" & Outlier == "ok"]
 plate_2$standards <- plate_2$data[Content == "Standard" & Outlier == "ok"]
 
-plate_3$samples <- plate_3$data[Content == "Sample" & Outlier == "ok"]
+plate_3$samples   <- plate_3$data[Content == "Sample" & Outlier == "ok"]
 plate_3$standards <- plate_3$data[Content == "Standard" & Outlier == "ok"]
+
+plate_4$samples   <- plate_4$data[Content == "Sample" & Outlier == "ok"]
+plate_4$standards <- plate_4$data[Content == "Standard" & Outlier == "ok"]
+
 ```
 
 ## Efficiency
@@ -224,11 +231,15 @@ plate_2$stats <- calculate_summary_statistics(plate_2$samples)
 kable(plate_2$stats, digits = 2)
 plate_3$stats <- calculate_summary_statistics(plate_3$samples)
 kable(plate_3$stats, digits = 2)
+plate_4$stats <- calculate_summary_statistics(plate_4$samples)
+kable(plate_4$stats, digits = 2)
 
 # Add stats to samples
 plate_1$samples <- merge(plate_1$samples, plate_1$stats, by = c("Sample", "Target"))
 plate_2$samples <- merge(plate_2$samples, plate_2$stats, by = c("Sample", "Target"))
 plate_3$samples <- merge(plate_3$samples, plate_3$stats, by = c("Sample", "Target"))
+plate_4$samples <- merge(plate_4$samples, plate_4$stats, by = c("Sample", "Target"))
+
 ```
 
 ## Standard curve
@@ -243,6 +254,7 @@ $C_q \sim \log_{10} (concentration).
 plate_1$standards <- plate_1$standards[Concentration > 1e-6]
 plate_2$standards <- plate_2$standards[Concentration > 1e-6]
 plate_3$standards <- plate_3$standards[Concentration > 1e-6]
+plate_4$standards <- plate_4$standards[Concentration > 1e-6]
 
 #' Calculate the standard curve for a qPCR plate
 #' @param data A data.table containing qPCR standard curve data
@@ -272,6 +284,8 @@ plate_2$standard_curve <- calculate_standard_curve(plate_2$standards)
 plate_2$standard_curve
 plate_3$standard_curve <- calculate_standard_curve(plate_3$standards)
 plate_3$standard_curve
+plate_4$standard_curve <- calculate_standard_curve(plate_4$standards)
+plate_4$standard_curve
 
 #' Plot standard curve
 plot_standard_curve <- function(data, standard_curve) {
@@ -299,6 +313,30 @@ plot_standard_curve <- function(data, standard_curve) {
 plot_standard_curve(plate_1$standards, plate_1$standard_curve)
 plot_standard_curve(plate_2$standards, plate_2$standard_curve)
 plot_standard_curve(plate_3$standards, plate_3$standard_curve)
+plot_standard_curve(plate_4$standards, plate_4$standard_curve)
+
+```
+
+## Repeats
+
+Repeat plate 3 soil ITS due to poor soil standard curve.
+
+```{r repeats}
+
+# Print samples in which all reps have been flagged as outliers
+repeats <- function(data) {
+  repeats <- data[
+    Content == "Sample",
+    .SD[all(Outlier != "ok")],
+    by = .(Sample, Target)
+  ][, .(Plate, Type, Target, Sample, Outlier = "all outliers")]
+  return(unique(repeats, by = "Sample")[order(Sample)])
+}
+
+kable(repeats(plate_1$data))
+kable(repeats(plate_2$data))
+kable(repeats(plate_3$data))
+kable(repeats(plate_4$data))
 
 ```
 
@@ -310,9 +348,9 @@ $$
 C_{q, adjusted}=\log_{2}\!\left(E^{C_{q}}\right)
 $$
 
-Where $E$ is the efficiency of the sample.
+Where $E$ is the PCR efficiency of the sample.
 
-To calculate adjusted copy number, a new standard curve is fit to the adjusted $C_q$ values os the standards.
+To calculate adjusted copy number, a new standard curve is fit to the adjusted $C_q$ values of the standards.
 
 ```{r efficiency_adjustment}
 
@@ -331,5 +369,6 @@ efficiency_adjustment <- function(data) {
 plate_1$samples <- efficiency_adjustment(plate_1$samples)
 plate_2$samples <- efficiency_adjustment(plate_2$samples)
 plate_3$samples <- efficiency_adjustment(plate_3$samples)
+plate_4$samples <- efficiency_adjustment(plate_4$samples)
 
 ```
