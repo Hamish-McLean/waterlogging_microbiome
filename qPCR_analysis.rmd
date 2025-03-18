@@ -43,6 +43,14 @@ data_columns <- c(
   "Cq", "Starting Quantity (SQ)"
 )
 
+# Define the plate files
+plate_files <- list(
+  plate_1 = "Data/2025-02-26 plate 1 roots ITS.csv",
+  plate_2 = "Data/2025-03-06 plate 2 roots 16S.csv",
+  plate_3 = "Data/2025-03-10 plate 3 soil ITS.csv",
+  plate_4 = "Data/2025-03-17 plate 4 soil 16S.csv"
+)
+
 # Define sample sources
 roots <- list(01:10, 21:30, 41:50)
 soil  <- list(11:20, 31:40, 51:60)
@@ -91,6 +99,11 @@ plate_1 <- load_qpcr_data("Data/2025-02-26 plate 1 roots ITS.csv", 1)
 plate_2 <- load_qpcr_data("Data/2025-03-06 plate 2 roots 16S.csv", 2)
 plate_3 <- load_qpcr_data("Data/2025-03-10 plate 3 soil ITS.csv",  3)
 plate_4 <- load_qpcr_data("Data/2025-03-17 plate 4 soil 16S.csv",  4)
+
+# plates <- lapply(
+#   plate_files,
+#   function(x) load_qpcr_data(x, as.numeric(substr(names(x), nchar(x), nchar(x))))
+# )
 
 kable(head(plate_4$samples))
 
@@ -240,103 +253,7 @@ plate_4$samples <- merge(plate_4$samples, plate_4$stats, c("Sample", "Target"))
 
 ```
 
-## Standard curve
-
-Calculate the standard curve for each qPCR plate.
-The standard curve is calculated by fitting a linear model to
-$C_q \sim \log_{10} (concentration).
-
-```{r standard_curve}
-
-# Remove dilutions < 10^-5 from standards
-plate_1$standards <- plate_1$standards[Concentration > 1e-5]
-plate_2$standards <- plate_2$standards[Concentration > 1e-5]
-plate_3$standards <- plate_3$standards[Concentration > 1e-5]
-plate_4$standards <- plate_4$standards[Concentration > 1e-5]
-
-#' Calculate the standard curve for a qPCR plate
-#' @param data A data.table containing qPCR standard curve data
-#' @return A list containing the intercept, slope, R^2, and efficiency
-#'
-calculate_standard_curve <- function(data) {
-  data[, {
-    model      <- lm(Cq ~ log10(Concentration))
-    intercept  <- model$coefficients[1]
-    slope      <- model$coefficients[2]
-    r_squared  <- summary(model)$r.squared
-    efficiency <- efficiency(slope)
-    list(
-      Intercept  = intercept,
-      Slope      = slope,
-      R2         = r_squared,
-      Efficiency = efficiency
-    )
-  }, by = Type]
-}
-
-# Calculate the standard curve
-plate_1$standard_curve <- calculate_standard_curve(plate_1$standards)
-plate_1$standard_curve
-plate_2$standard_curve <- calculate_standard_curve(plate_2$standards)
-plate_2$standard_curve
-plate_3$standard_curve <- calculate_standard_curve(plate_3$standards)
-plate_3$standard_curve
-plate_4$standard_curve <- calculate_standard_curve(plate_4$standards)
-plate_4$standard_curve
-
-#' Plot standard curve
-plot_standard_curve <- function(data, standard_curve) {
-  types <- unique(data$Type)
-  plots <- list()
-  for (type in types) {
-    plots[[type]] <- ggscatter(
-      data[Type == type], x = "log10_concentration", y = "Cq",
-      add = "reg.line", conf.int = TRUE
-    ) +
-      stat_regline_equation(
-        aes(label = paste(
-          after_stat(eq.label), after_stat(rr.label), sep = "~~~~"
-        )),
-        label.x = -2.5, label.y = 32
-      ) +
-      ggtitle(paste0("Plate ", data$Plate[1], " ", type, " ", data$Target[1])) +
-      xlab(TeX("$\\log_{10}(Concentration)$")) +
-      ylab(TeX("$C_q$"))
-  }
-  ggarrange(plotlist = plots)
-}
-
-plot_standard_curve(plate_1$standards, plate_1$standard_curve)
-plot_standard_curve(plate_2$standards, plate_2$standard_curve)
-plot_standard_curve(plate_3$standards, plate_3$standard_curve)
-plot_standard_curve(plate_4$standards, plate_4$standard_curve)
-
-```
-
-## Repeats
-
-Repeat plate 3 soil ITS due to poor soil standard curve.
-
-```{r repeats}
-
-# Print samples in which all reps have been flagged as outliers
-repeats <- function(data) {
-  repeats <- data[
-    Content == "Sample",
-    .SD[all(Outlier != "ok")],
-    by = .(Sample, Target)
-  ][, .(Plate, Type, Target, Sample, Outlier = "all outliers")]
-  return(unique(repeats, by = "Sample")[order(Sample)])
-}
-
-kable(repeats(plate_1$data))
-kable(repeats(plate_2$data))
-kable(repeats(plate_3$data))
-kable(repeats(plate_4$data))
-
-```
-
-## Efficiency adjusted $C_q$
+### Efficiency adjusted $C_q$
 
 $C_q$ can be adjusted for efficiency by the equation:
 
@@ -364,5 +281,213 @@ efficiency_adjustment(plate_1$samples)
 efficiency_adjustment(plate_2$samples)
 efficiency_adjustment(plate_3$samples)
 efficiency_adjustment(plate_4$samples)
+
+```
+
+## Standard curves
+
+Calculate the standard curve for each qPCR plate.
+The standard curve is calculated by fitting a linear model to
+$C_q \sim \log_{10} (concentration).
+
+```{r standard_curve}
+
+# Remove dilutions < 10^-5 from standards
+plate_1$standards <- plate_1$standards[Concentration > 1e-5]
+plate_2$standards <- plate_2$standards[Concentration > 1e-5]
+plate_3$standards <- plate_3$standards[Concentration > 1e-5]
+plate_4$standards <- plate_4$standards[Concentration > 1e-5]
+
+#' Calculate the standard curve for a qPCR plate
+#' @param data A data.table containing qPCR standard curve data
+#' @return A list containing the intercept, slope, R^2, and efficiency
+#'
+calculate_standard_curve <- function(data) {
+  data[, {
+    model      <- lm(Cq ~ log10(Concentration))
+    intercept  <- model$coefficients[1]
+    slope      <- model$coefficients[2]
+    r_squared  <- summary(model)$r.squared
+    efficiency <- efficiency(slope)
+    list(
+      Plate      = Plate[1],
+      Target     = Target[1],
+      N          = .N,
+      Intercept  = intercept,
+      Slope      = slope,
+      R2         = r_squared,
+      Efficiency = efficiency
+    )
+  }, by = .(Target, Type)]
+}
+
+# Calculate the standard curve
+plate_1$standard_curve <- calculate_standard_curve(plate_1$standards)
+plate_2$standard_curve <- calculate_standard_curve(plate_2$standards)
+plate_3$standard_curve <- calculate_standard_curve(plate_3$standards)
+plate_4$standard_curve <- calculate_standard_curve(plate_4$standards)
+
+kable(plate_1$standard_curve, digits = 2)
+kable(plate_2$standard_curve, digits = 2)
+kable(plate_3$standard_curve, digits = 2)
+kable(plate_4$standard_curve, digits = 2)
+
+```
+
+### Standard efficiency adjusted $C_q$
+
+```{r standard_efficiency_adjustment}
+
+merge_efficiency <- function(data, standard_curve) {
+  data[standard_curve, on = .(Target, Type), Efficiency := i.Efficiency]
+}
+
+merge_efficiency(plate_1$standards, plate_1$standard_curve)
+merge_efficiency(plate_2$standards, plate_2$standard_curve)
+merge_efficiency(plate_3$standards, plate_3$standard_curve)
+merge_efficiency(plate_4$standards, plate_4$standard_curve)
+
+# Calculate efficiency adjusted Cq values for standards
+efficiency_adjustment(plate_1$standards)
+efficiency_adjustment(plate_2$standards)
+efficiency_adjustment(plate_3$standards)
+efficiency_adjustment(plate_4$standards)
+
+```
+
+### Standard curve plots
+
+```{r standard_curve_plots}
+
+#' Plot standard curve
+plot_standard_curve <- function(data, standard_curve) {
+  types <- unique(data$Type)
+  plots <- list()
+  for (type in types) {
+    plots[[type]] <- ggscatter(
+      data[Type == type], x = "log10_concentration", y = "Cq_adjusted",
+      add = "reg.line", conf.int = TRUE
+    ) +
+      stat_regline_equation(
+        aes(label = paste(
+          after_stat(eq.label), after_stat(rr.label), sep = "~~~~"
+        )),
+        label.x = -2.5, label.y = 32
+      ) +
+      ggtitle(paste0("Plate ", data$Plate[1], " ", type, " ", data$Target[1])) +
+      xlab(TeX("$\\log_{10}(Concentration)$")) +
+      ylab(TeX("$C_q$"))
+  }
+  ggarrange(plotlist = plots)
+}
+
+plot_standard_curve(plate_1$standards, plate_1$standard_curve)
+plot_standard_curve(plate_2$standards, plate_2$standard_curve)
+plot_standard_curve(plate_3$standards, plate_3$standard_curve)
+plot_standard_curve(plate_4$standards, plate_4$standard_curve)
+
+```
+
+```{r combined_standard_curve}
+
+combined_standard <- rbindlist(list(
+  plate_1$standards,
+  plate_2$standards,
+  plate_3$standards,
+  plate_4$standards
+))
+
+combined_standard_curve <- calculate_standard_curve(combined_standard)
+
+kable(combined_standard_curve, digits = 2)
+
+plot_standard_curve(combined_standard[Target == "ITS"], combined_standard_curve)
+plot_standard_curve(combined_standard[Target == "16S"], combined_standard_curve)
+
+bac_initial_copies <- 1e7
+fun_initial_copies <- 1e5
+
+# Add TCN to combined standard from dilution range from initial copies based on concentration of standards
+combined_standard[Target == "ITS", TCN := Concentration * fun_initial_copies]
+combined_standard[Target == "16S", TCN := Concentration * bac_initial_copies]
+combined_standard[, log10_TCN := log10(TCN)]
+
+# Plot TCN vs Cq
+ggscatter(
+  combined_standard, x = "log10_TCN", y = "Cq_adjusted",
+  add = "reg.line", conf.int = TRUE
+) +
+  stat_regline_equation(
+    aes(label = paste(
+      after_stat(eq.label), after_stat(rr.label), sep = "~~~~"
+    )),
+    label.x = 2, label.y = 15
+  ) +
+  facet_grid(Target ~ Type, scales = "free") +
+  ggtitle("Combined Standard Curve") +
+  xlab(TeX("$\\log_{10}(TCN)$")) +
+  ylab(TeX("$C_q$"))
+
+# Plot TCN vs Cq_adjusted for each combination of Target and Type
+# ggplot(combined_standard, aes(x = log10(TCN), y = Cq_adjusted)) +
+#   geom_point() +
+#   geom_smooth(method = "lm", se = TRUE) +
+#   stat_regline_equation(
+#     aes(label = paste(after_stat(eq.label), after_stat(rr.label), sep = "~~~~")),
+#     label.x = 0.5, label.y = 15
+#   ) +
+#   facet_grid(Target ~ Type, scales = "free") +
+#   ggtitle("Combined Standard Curves") +
+#   xlab(TeX("$\\log_{10}(TCN)$")) +
+#   ylab(TeX("$C_q$"))
+
+```
+
+## Repeats
+
+Repeat plate 3 soil ITS due to poor soil standard curve.
+
+```{r repeats}
+
+# Print samples in which all reps have been flagged as outliers
+repeats <- function(data) {
+  data[
+    Content == "Sample",
+    .SD[all(Outlier != "ok")],
+    by = .(Sample, Target)
+  ][
+    , .(Plate, Type, Target, Sample, Outlier = "outliers")
+  ][
+    , .SD[1], by = .(Sample, Target)
+  ][
+    order(Sample)
+  ]
+}
+
+kable(repeats(plate_1$data))
+kable(repeats(plate_2$data))
+kable(repeats(plate_3$data))
+kable(repeats(plate_4$data))
+
+```
+
+## Sample copy number
+
+Calculate the theoretical copy number (TCN) of each sample based on the standard curve.
+
+```{r sample_copy_number}
+
+#` Calculate TCN for samples
+calculate_tcn <- function(data, standard_curve) {
+  data[
+    standard_curve,
+    on = .(Target, Type),
+    TCN := 10 ^ ((Cq_adjusted - i.Intercept) / i.Slope)
+  ]
+}
+
+for (plate in list(plate_1, plate_2, plate_3, plate_4)) {
+  calculate_tcn(plate$samples, plate$standard_curve)
+}
 
 ```
