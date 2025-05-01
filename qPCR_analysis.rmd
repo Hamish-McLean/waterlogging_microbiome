@@ -12,12 +12,15 @@ output:
 ```
 
 ```{r libraries, include = FALSE}
+
 library(data.table)
 library(ggpubr)
+library(here)
 library(kableExtra)
 library(knitr)
 library(latex2exp)
 library(rmarkdown)
+
 ```
 
 Load qPCR data from csv files exported from the qPCR machine.
@@ -27,8 +30,13 @@ Caclulate standard curves for the standards on each plate.
 Calculate efficiency of each qPCR reactions.
 
 ```{r variables}
+
 cq_threshold <- 0.5 # Threshold for difference between triplicate Cq values
 max_cq       <- 35 # Maximum Cq value to keep
+
+here         <- here::here() # Set working directory to the location of this file
+data_dir     <- file.path(here, "..", "Data") # Data directory
+
 ```
 
 ## Load qPCR Data
@@ -61,15 +69,27 @@ soil  <- list(11:20, 31:40, 51:60)
 #' @param columns The columns to select
 #' @return A list containing the samples, standards, and NTCs as data.tables
 #'
-load_qpcr_data <- function(file_path, plate, header_rows = 19, columns = data_columns) {
+load_qpcr_data <- function(
+  data_dir, filename, plate,
+  header_rows = 19, columns = data_columns
+) {
+  file_path <- file.path(data_dir, filename)
+
+  # Read the csv file and skip the header rows
   data <- fread(file_path, skip = header_rows, select = columns)
   setnames(data, "Starting Quantity (SQ)", "Concentration")
+
+  # Add plate number to the data
   data[, Plate := plate]
+
+  # Rename Content values
   data[, Content := fcase(
     startsWith(Content, "Unkn"), "Sample",
     startsWith(Content, "Std"), "Standard",
     startsWith(Content, "NTC"), "NTC"
   )]
+
+  # Add Type column based on Content
   data[Content == "Sample", Type := fcase(
     Sample %in% unlist(roots), "Root",
     Sample %in% unlist(soil), "Soil"
@@ -78,27 +98,31 @@ load_qpcr_data <- function(file_path, plate, header_rows = 19, columns = data_co
     startsWith(Sample, "Sr"), "Root",
     startsWith(Sample, "Ss"), "Soil"
   )]
+
   # Add leading 0 to samples for sorting
   data[Content == "Sample", Sample := sprintf("%02d", as.numeric(Sample))]
+
   # Calculate sample concentration
   data[, Dilution := as.numeric(Dilution)]
   data[Content == "Sample", Concentration := 1 / as.numeric(Dilution)]
   data[Content == "Standard", Dilution := 1 / as.numeric(Concentration)]
   data[, log10_concentration := log10(Concentration)]
-  plate <- list(
+
+  # Construct the plate object
+  list(
     plate     = plate,
     data 	 	  = data,
     samples   = data[Content == "Sample"],
     standards = data[Content == "Standard"],
     ntcs      = data[Content == "NTC"]
   )
-  return(plate)
+
 }
 
-plate_1 <- load_qpcr_data("Data/2025-02-26 plate 1 roots ITS.csv", 1)
-plate_2 <- load_qpcr_data("Data/2025-03-06 plate 2 roots 16S.csv", 2)
-plate_3 <- load_qpcr_data("Data/2025-03-10 plate 3 soil ITS.csv",  3)
-plate_4 <- load_qpcr_data("Data/2025-03-17 plate 4 soil 16S.csv",  4)
+plate_1 <- load_qpcr_data(data_dir, "2025-02-26 plate 1 roots ITS.csv", 1)
+plate_2 <- load_qpcr_data(data_dir, "2025-03-06 plate 2 roots 16S.csv", 2)
+plate_3 <- load_qpcr_data(data_dir, "2025-03-10 plate 3 soil ITS.csv",  3)
+plate_4 <- load_qpcr_data(data_dir, "2025-03-17 plate 4 soil 16S.csv",  4)
 
 # plates <- lapply(
 #   plate_files,
