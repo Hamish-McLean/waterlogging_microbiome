@@ -237,12 +237,13 @@ calculate_summary_statistics <- function(data) {
 
 # Calculate summary statistics
 plate_1$stats <- calculate_summary_statistics(plate_1$samples)
-kable(plate_1$stats, digits = 2)
 plate_2$stats <- calculate_summary_statistics(plate_2$samples)
-kable(plate_2$stats, digits = 2)
 plate_3$stats <- calculate_summary_statistics(plate_3$samples)
-kable(plate_3$stats, digits = 2)
 plate_4$stats <- calculate_summary_statistics(plate_4$samples)
+
+kable(plate_1$stats, digits = 2)
+kable(plate_2$stats, digits = 2)
+kable(plate_3$stats, digits = 2)
 kable(plate_4$stats, digits = 2)
 
 # Add stats to samples
@@ -302,9 +303,14 @@ plate_4$standards <- plate_4$standards[Concentration > 1e-5]
 #' @param data A data.table containing qPCR standard curve data
 #' @return A list containing the intercept, slope, R^2, and efficiency
 #'
-calculate_standard_curve <- function(data) {
+calculate_standard_curve <- function(data, adjust_cq = FALSE, use_tcn = FALSE) {
   data[, {
-    model      <- lm(Cq ~ log10(Concentration))
+    formula <- if (adjust_cq) {
+      if (use_tcn) Cq_adjusted ~ log10_TCN else Cq_adjusted ~ log10_concentration
+    } else {
+      if (use_tcn) Cq ~ log10_TCN else Cq ~ log10_concentration
+    }
+    model <- lm(formula, data = .SD)
     intercept  <- model$coefficients[1]
     slope      <- model$coefficients[2]
     r_squared  <- summary(model)$r.squared
@@ -443,6 +449,46 @@ ggscatter(
 
 ```
 
+### Standard curve copy number
+
+```{r standard_copy_number}
+
+# Calculate TCN for standards
+for (plate in list(plate_1, plate_2, plate_3, plate_4)) {
+  plate$standards[Target == "ITS", TCN := Concentration * fun_initial_copies]
+  plate$standards[Target == "16S", TCN := Concentration * bac_initial_copies]
+  plate$standards[, log10_TCN := log10(TCN)]
+}
+
+plate_1$standards
+
+# Calculate standard curves for each plate using TCN
+for (plate in list(plate_1, plate_2, plate_3, plate_4)) {
+  plate$tcn_standard_curve <- calculate_standard_curve(
+    plate$standards, adjust_cq = TRUE, use_tcn = TRUE
+  )
+}
+
+plate_1$tcn_standard_curve <- calculate_standard_curve(
+  plate_1$standards, adjust_cq = TRUE, use_tcn = TRUE
+)
+plate_2$tcn_standard_curve <- calculate_standard_curve(
+  plate_2$standards, adjust_cq = TRUE, use_tcn = TRUE
+)
+plate_3$tcn_standard_curve <- calculate_standard_curve(
+  plate_3$standards, adjust_cq = TRUE, use_tcn = TRUE
+)
+plate_4$tcn_standard_curve <- calculate_standard_curve(
+  plate_4$standards, adjust_cq = TRUE, use_tcn = TRUE
+)
+
+plate_1$tcn_standard_curve
+plate_2$tcn_standard_curve
+plate_3$tcn_standard_curve
+plate_4$tcn_standard_curve
+
+```
+
 ## Repeats
 
 Repeat plate 3 soil ITS due to poor soil standard curve.
@@ -473,7 +519,11 @@ kable(repeats(plate_4$data))
 
 ## Sample copy number
 
-Calculate the theoretical copy number (TCN) of each sample based on the standard curve.
+Calculate the theoretical copy number (TCN) of each sample based on the standard curve using the equation:
+
+$$
+dilution \times 10^{(C_{q} - intercept)/slope}
+$$
 
 ```{r sample_copy_number}
 
@@ -482,12 +532,102 @@ calculate_tcn <- function(data, standard_curve) {
   data[
     standard_curve,
     on = .(Target, Type),
-    TCN := 10 ^ ((Cq_adjusted - i.Intercept) / i.Slope)
+    TCN := Dilution * 10 ^ ((Cq_adjusted - i.Intercept) / i.Slope)
   ]
 }
 
 for (plate in list(plate_1, plate_2, plate_3, plate_4)) {
-  calculate_tcn(plate$samples, plate$standard_curve)
+  calculate_tcn(plate$samples, plate$tcn_standard_curve)
 }
+
+```
+
+## Sample summary
+
+Calculate the mean and standard deviation of the TCN for each sample.
+
+```{r sample_summary}
+
+#' Calculate sample summary statistics
+sample_summary <- function(data) {
+  data[
+    Content == "Sample",
+    .(Mean = mean(TCN), SD = sd(TCN), N = .N),
+    by = .(Sample, Target)
+  ][
+    order(Sample)
+  ]
+}
+
+sample_summary(plate_1$samples)
+
+ggplot(plate_2$samples, aes(x = Sample, y = log10(TCN))) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  ggtitle("Sample TCN") +
+  xlab("Sample") +
+  ylab("TCN") +
+  theme("ggpubr")
+
+```
+
+## Combined data
+
+```{r combined_data}
+
+combined_data <- rbindlist(list(
+  plate_1$samples,
+  plate_2$samples,
+  plate_3$samples,
+  plate_4$samples
+))
+
+```
+
+## Repeats
+
+```{r z_score}
+
+# Calculate z score for each replicate
+combined_data[, z_score := (TCN - mean(TCN)) / sd(TCN), by = .(Sample, Target)]
+
+combined_data[, z_score := scale(TCN), by = .(Sample, Target)]
+
+combined_data[abs(z_score) > 1.5][order(Target, Sample)]
+
+ggplot(combined_data, aes(x = Sample, y = log10(TCN))) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  facet_wrap(~ Target, ncol = 1) +
+  ggtitle("Sample TCN") +
+  xlab("Sample") +
+  ylab("TCN") +
+  theme("ggpubr")
+
+```
+
+## Summary
+
+Calculate the mean and standard deviation of the TCN for each sample.
+
+Calculate TCN per mg of sample. 2 % of the sample mass was used for DNA extraction.
+
+```{r summary}
+
+summary <- combined_data[,
+  .(mean_TCN = mean(TCN), sd_TCN = sd(TCN), N = .N),
+  by = .(Target, Sample)
+]
+
+# Combined with sample mass
+sample_mass <- fread("Data/sample_mass.csv")[, Sample := sprintf("%02d", Sample)]
+summary <- merge(summary, sample_mass, by = "Sample")
+
+summary[, TCN_mg := mean_TCN / (mg * 2 / 100)]
+
+kable(summary)
+
+# Export as csv
+fwrite(summary, "Data/abundance.csv")
 
 ```
