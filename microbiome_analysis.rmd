@@ -131,7 +131,7 @@ if(length(filt) == 0) {
 
 ### Rarefaction
 
-Remove samples with read count below `r READFILTER * 100` % of median.
+Remove samples with read count below `r READ_FILTER * 100` % of median.
 
 ```{r rarefaction}
 
@@ -233,13 +233,13 @@ Copy number is calculated per mg of root sample from the qPCR data.
 ```{r DESeq}
 
 # Make sure countData and colData still match, if they do, create DESeq objects
-if(identical(colnames(FUN$countData), rownames(FUN$colData))) {
-  # Create DESeq object
-  FUN$dds <- ubiom_to_des(FUN)
-  print("FUN DESeq object created")
-} else {
-  stop("FUN countData and colData do not match")
-}
+# if(identical(colnames(FUN$countData), rownames(FUN$colData))) {
+#   # Create DESeq object
+#   FUN$dds <- ubiom_to_des(FUN)
+#   print("FUN DESeq object created")
+# } else {
+#   stop("FUN countData and colData do not match")
+# }
 
 if(identical(colnames(BAC$countData), rownames(BAC$colData))) {
   # Create DESeq object
