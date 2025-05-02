@@ -1,0 +1,385 @@
+---
+title: "Waterlogging microbiome analysis"
+author: "Hamish McLean"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+options(viewer = NULL)
+```
+
+```{r libraries}
+
+library(data.table)
+library(DESeq2)
+library(ggpubr)
+library(gridExtra)
+library(here)
+library(kableExtra)
+library(viridis)
+
+source("functions/loadme.R")
+source("functions/metabarcoding.R")
+source("functions/metafuncs.R")
+source("functions/rarefaction.R")
+
+```
+
+```{r constants}
+
+DATA_DIR    <- normalizePath(here("..", "Data"))
+FIGURES_DIR <- here("figures")
+
+ASV_FILTER  <- 0.001 # ASV filter for removing low abundance ASVs
+READ_FILTER <- 0.05 # Read count filter for rarefaction
+TAX_CONF    <- 0.65 # Confidence threshold for taxonomic rank assignment
+
+```
+
+## Load data
+
+```{r load-data}
+
+FUN <- loadData(
+  here(DATA_DIR, "DADA2", "FUN.asv_table_filtered.txt"),
+  here(DATA_DIR, "metadata.txt"),
+  here(DATA_DIR, "DADA2", "FUN.sintax.taxa"),
+  tax_conf = TAX_CONF,
+  RHB = "FUN"
+)
+
+BAC <- loadData(
+  here(DATA_DIR, "DADA2", "BAC.asv_table_filtered.txt"),
+  here(DATA_DIR, "metadata.txt"),
+  here(DATA_DIR, "DADA2", "BAC.sintax.taxa"),
+  tax_conf = TAX_CONF,
+  RHB = "BAC"
+)
+
+# Remove ".raw" from the end of the colnames of the countData
+colnames(FUN$countData) <- gsub("\\.raw$", "", colnames(FUN$countData))
+colnames(BAC$countData) <- gsub("\\.raw$", "", colnames(BAC$countData))
+
+```
+
+## Filter data
+
+### Filter taxa
+
+Plantae taxa are filtered from fungal `taxData`.
+Chloroplast and Eukaryote  taxa are filtered from bacterial `taxData`.
+Corresponding ASVs are removed from `countData`.
+
+```{r filter_taxa}
+
+# Fungi: Plantae ASVs
+cat(
+  "Fungi:\n",
+  " - Total ASVs:", nrow(FUN$taxData), "\n",
+  " - Plantae ASVs:", length(grep("Plantae", FUN$taxData$kingdom)), "\n\n"
+)
+
+# Filter Plantae ASVs
+filt <- rownames(FUN$taxData[grep("Plantae", FUN$taxData$kingdom), ])
+
+if(length(filt) == 0) {
+  cat("No fungal ASVs to remove\n")
+} else {
+  cat("Fungi: removing", length(filt), "ASVs\n")
+  FUN$taxData <- FUN$taxData[!rownames(FUN$taxData) %in% filt, ]
+  FUN$countData <- FUN$countData[!rownames(FUN$countData) %in% filt, ]
+}
+
+# Bacteria: Chloroplast (Streptophyta) and Eukaryote ASVs
+cat(
+  "Bacteria:\n",
+  " - Total ASVs:", nrow(BAC$taxData), "\n",
+  " - Chloroplast ASVs:", nrow(BAC$taxData[
+    grepl("Streptophyta", BAC$taxData$genus) & 
+    as.numeric(BAC$taxData$g_conf) >= TAX_CONF,
+  ]), "\n",
+  " - Eukaryote ASVs:", length(grep("Eukaryota", BAC$taxData$kingdom)), "\n\n"
+)
+
+# Filter Chloroplast and Eukaryote ASVs
+filt <- rownames(
+  BAC$taxData[
+    grepl("Streptophyta", BAC$taxData$genus) & 
+    as.numeric(BAC$taxData$g_conf) >= TAX_CONF,
+  ]
+)
+
+filt <- unique(c(filt, rownames(BAC$taxData[grep("Eukaryota", BAC$taxData$kingdom), ])))
+
+if(length(filt) == 0) {
+  cat("No Bacterial ASVs to remove\n")
+} else {
+  cat("Bacteria: removing", length(filt), "ASVs\n")
+  BAC$taxData   <- BAC$taxData[!rownames(BAC$taxData) %in% filt, ]
+  BAC$countData <- BAC$countData[!rownames(BAC$countData) %in% filt, ]
+}
+
+```
+
+### Rarefaction
+
+Remove samples with read count below `r READFILTER * 100` % of median.
+
+```{r rarefaction}
+
+rare_fun <- gfunc(FUN$countData, FUN$colData, "Fungi")
+
+rare_bac <- gfunc(BAC$countData, BAC$colData, "Bacteria")
+
+rarefaction_plots <- grid.arrange(
+  rare_bac, rare_fun,
+  # left = textGrob(label = expression("log"[10] * " aligned sequences"), rot = 90),
+  bottom = "ASV count", nrow = 2
+)
+
+ggsave(filename = "rarefaction_plots.png", plot = rarefaction_plots, path = FIGURES_DIR)
+
+rarefaction_plots
+
+# Fungi
+med <- median(colSums(FUN$countData))
+filt <- !colSums(FUN$countData) > med * READ_FILTER
+cat("Fungi: ",sum(filt),"sample(s) with <", READ_FILTER * 100, "% of median reads\n\n")
+
+# Bacteria
+med <- median(colSums(BAC$countData))
+filt <- !colSums(BAC$countData) > med * READ_FILTER
+cat("Bacteria: ",sum(filt),"sample(s) with <", READ_FILTER * 100, "% of median reads\n\n")
+
+```
+
+### Filter ASVs by read count
+
+Remove ASVs with less than `r ASV_FILTER * 100` % of total reads across all samples.
+
+```{r asv_propotions}
+
+asv_propotions <- function(countData, proportion){
+  i <- sum(countData)
+  y <- rowSums(countData)
+  y <- y[order(y, decreasing = T)]
+  asvs <- length(y[(cumsum(y) / i <= proportion)])
+  return(asvs)
+}
+
+proportions <- c(0.5, 0.9, 0.99, 0.999, 1)
+
+top_asvs <- data.table(
+  "proportion" = proportions,
+  "Fungi" = lapply(proportions, function(x) asv_propotions(FUN$countData, x)),
+  "Bacteria" = lapply(proportions, function(x) asv_propotions(BAC$countData, x))
+)
+
+top_asvs %>%
+  kbl() %>%
+  kable_styling("striped", full_width = F)
+
+```
+
+```{r filter_asvs}
+
+# Fungi
+keep <- filter_otus(FUN$countData, ASV_FILTER)
+cat(
+  "Fungi:\n", 
+  " - total ASVs:", nrow(FUN$countData), "\n",
+  " - removing", nrow(FUN$countData) - length(keep), "ASVs\n",
+  " - remaining ASVs:", length(keep), "\n\n"
+)
+
+FUN$taxData <- FUN$taxData[rownames(FUN$taxData) %in% keep,]
+FUN$countData <- FUN$countData[rownames(FUN$countData) %in% keep,]
+
+# Bacteria
+keep <-  filter_otus(BAC$countData, ASV_FILTER)
+cat(
+  "Bacteria:\n",
+  " - total ASVs:", nrow(BAC$countData), "\n",
+  " - removing", nrow(BAC$countData) - length(keep), "ASVs\n",
+  " - remaining ASVs:", length(keep), "\n\n"
+)
+
+BAC$taxData <- BAC$taxData[rownames(BAC$taxData) %in% keep,]
+BAC$countData <- BAC$countData[rownames(BAC$countData) %in% keep,]
+
+```
+
+## Absolute abundance normalisation
+
+ASV normalisation is performed using qPCR theoretical copy number data.
+Copy number is calculated per mg of root sample from the qPCR data.
+
+### Prepare qPCR abundance data
+
+```{r qPCR_abundance}
+
+```
+
+## Create DESeq objects
+
+```{r DESeq}
+
+# Make sure countData and colData still match, if they do, create DESeq objects
+if(identical(colnames(FUN$countData), rownames(FUN$colData))) {
+  # Create DESeq object
+  FUN$dds <- ubiom_to_des(FUN)
+  print("FUN DESeq object created")
+} else {
+  stop("FUN countData and colData do not match")
+}
+
+if(identical(colnames(BAC$countData), rownames(BAC$colData))) {
+  # Create DESeq object
+  BAC$dds <- ubiom_to_des(BAC)
+  print("BAC DESeq object created")
+} else {
+  stop("BAC countData and colData do not match")
+}
+
+```
+
+## Abundance normalisation
+
+Absolute abundance normalisation using DESeq2 size factors.
+
+Values are centred around the mean of the copy number.
+
+```{r normalisation}
+# Normalise count data using DESeq2 size factors
+
+# FUN$dds$sizeFactor <- FUN$dds$copy_number / mean(FUN$dds$copy_number)
+# BAC$dds$sizeFactor <- BAC$dds$copy_number / mean(BAC$dds$copy_number)
+```
+
+## ASV and sample summary
+
+### Read and sample summary
+
+```{r read_summary}
+
+#' @title Read summary
+#' @description Create a summary of the read counts per sample
+#' @param dds DESeq2 object
+#' @param norm Logical, whether to normalise the counts
+#' @return A data.table with the total, mean, median, max and min reads per sample
+#'
+read_summary <- function(dds, norm = FALSE) {
+  countData <- counts(dds, normalize = norm)
+  data.table(
+    "Total reads" = sum(countData),
+    "Mean reads per sample" = mean(colSums(countData)),
+    "Median reads per sample" = median(colSums(countData)),
+    "Max reads per sample" = max(colSums(countData)),
+    "Min reads per sample" = min(colSums(countData))
+  )
+}
+
+data.table(
+  "Metric" = c("Total reads", "Mean reads per sample", "Median reads per sample", "Max reads per sample", "Min reads per sample"),
+  # "Fungi (Raw)" = unlist(read_summary(FUN$dds, FALSE)),
+  # "Fungi (Normalized)" = unlist(read_summary(FUN$dds, TRUE)),
+  "Bacteria (Raw)" = unlist(read_summary(BAC$dds, FALSE)),
+  "Bacteria (Normalized)" = unlist(read_summary(BAC$dds, TRUE))
+) %>%
+  kbl() %>%
+  kable_styling("striped", full_width = F)
+
+
+```
+
+### ASV summary 
+
+```{r FUN asv summary}
+
+#' @title ASV summary
+#' @description Create a summary of the read counts per ASV
+#' @param dds DESeq2 object
+#' @param norm Logical, whether to normalise the counts
+#' @return A data.table with the total, mean, median, max and min reads per ASV
+#'
+ASV_summary <- function(dds, norm = FALSE) {
+  countData <- counts(dds, normalize = norm)
+  data.table(
+    "Total ASVs" = nrow(countData),
+    "Mean reads per ASV" = round(mean(rowSums(countData)), 1),
+    "Median reads per ASV" = median(rowSums(countData)),
+    "Max reads per ASV" = max(rowSums(countData)),
+    "Min reads per ASV" = min(rowSums(countData))
+  )
+}
+
+data.table(
+  "Metric" = c("Total ASVs", "Mean reads per ASV", "Median reads per ASV", "Max reads per ASV", "Min reads per ASV"),
+  # "Fungi (Raw)" = unlist(ASV_summary(FUN$dds, FALSE)),
+  # "Fungi (Normalized)" = unlist(ASV_summary(FUN$dds, TRUE)),
+  "Bacteria (Raw)" = unlist(ASV_summary(BAC$dds, FALSE)),
+  "Bacteria (Normalized)" = round(unlist(ASV_summary(BAC$dds, TRUE)), 2)
+) %>%
+  kbl() %>%
+  kable_styling("striped", full_width = F)
+
+
+top_asvs <- function(countData, taxData, n = 10) {
+  y <- rowSums(countData)
+  y <- y[order(y, decreasing = T)]
+  xy <- y / sum(y)
+  data.frame(
+    counts = y[1:n], 
+    proportion = xy[1:n], 
+    rank = taxData[names(y)[1:n],]$rank
+  )
+}
+
+top_asvs(FUN$countData, FUN$taxData, n = 10)
+
+top_asvs(counts(BAC$dds, normalize = TRUE), BAC$taxData, n = 10)
+
+```
+
+## Taxonomy Summary
+
+### Taxonomy identifiable
+
+Proportion of ASVs which can be assigned (with the given confidence) at each taxonomic rank.
+
+```{r FUN taxonomy ASVs}
+
+# Proportion of ASVs which can be assigned (with the given confidence) at each taxonomic rank
+
+
+taxonomy_summary <- function(taxData) {
+  tx <- copy(taxData)
+  setDT(tx)
+  cols <- names(taxData)[9:15]
+  tx[, (cols) := lapply(.SD, as.numeric), .SDcols = cols]
+  
+  data.table(
+    rank = c("kingdom", "phylum", "class", "order", "family", "genus", "species"),
+    "0.8" = round(unlist(lapply(cols, function(col) sum(tx[[col]] >= 0.8) / nrow(tx))), 2),
+    "0.65" = round(unlist(lapply(cols, function(col) sum(tx[[col]] >= 0.65) / nrow(tx))), 2),
+    "0.5" = round(unlist(lapply(cols, function(col) sum(tx[[col]] >= 0.5) / nrow(tx))), 2)
+  )
+}
+
+taxonomy_summary(FUN$taxData) %>%
+  kbl() %>%
+  kable_styling("striped", full_width = F)
+
+taxonomy_summary(BAC$taxData) %>%
+  kbl() %>%
+  kable_styling("striped", full_width = F)
+
+```
