@@ -20,10 +20,12 @@ options(viewer = NULL)
 
 library(data.table)
 library(DESeq2)
+library(dplyr)
 library(ggpubr)
 library(gridExtra)
 library(here)
 library(kableExtra)
+library(vegan)
 library(viridis)
 
 source("functions/loadme.R")
@@ -41,6 +43,12 @@ FIGURES_DIR <- here("figures")
 ASV_FILTER  <- 0.001 # ASV filter for removing low abundance ASVs
 READ_FILTER <- 0.05 # Read count filter for rarefaction
 TAX_CONF    <- 0.65 # Confidence threshold for taxonomic rank assignment
+
+# Colour blind palette
+cbPalette <- c(
+  "#000000", "#E69F00", "#56B4E9", "#009E73", 
+  "#F0E442", "#0072B2", "#D55E00", "#CC79A7"
+)
 
 ```
 
@@ -288,7 +296,10 @@ read_summary <- function(dds, norm = FALSE) {
 }
 
 data.table(
-  "Metric" = c("Total reads", "Mean reads per sample", "Median reads per sample", "Max reads per sample", "Min reads per sample"),
+  "Metric" = c(
+    "Total reads", "Mean reads per sample", "Median reads per sample", 
+    "Max reads per sample", "Min reads per sample"
+  ),
   # "Fungi (Raw)" = unlist(read_summary(FUN$dds, FALSE)),
   # "Fungi (Normalized)" = unlist(read_summary(FUN$dds, TRUE)),
   "Bacteria (Raw)" = unlist(read_summary(BAC$dds, FALSE)),
@@ -322,7 +333,10 @@ ASV_summary <- function(dds, norm = FALSE) {
 }
 
 data.table(
-  "Metric" = c("Total ASVs", "Mean reads per ASV", "Median reads per ASV", "Max reads per ASV", "Min reads per ASV"),
+  "Metric" = c(
+    "Total ASVs", "Mean reads per ASV", "Median reads per ASV", 
+    "Max reads per ASV", "Min reads per ASV"
+  ),
   # "Fungi (Raw)" = unlist(ASV_summary(FUN$dds, FALSE)),
   # "Fungi (Normalized)" = unlist(ASV_summary(FUN$dds, TRUE)),
   "Bacteria (Raw)" = unlist(ASV_summary(BAC$dds, FALSE)),
@@ -355,10 +369,7 @@ top_asvs(counts(BAC$dds, normalize = TRUE), BAC$taxData, n = 10)
 
 Proportion of ASVs which can be assigned (with the given confidence) at each taxonomic rank.
 
-```{r FUN taxonomy ASVs}
-
-# Proportion of ASVs which can be assigned (with the given confidence) at each taxonomic rank
-
+```{r taxonomy ASVs}
 
 taxonomy_summary <- function(taxData) {
   tx <- copy(taxData)
@@ -374,12 +385,110 @@ taxonomy_summary <- function(taxData) {
   )
 }
 
+# Fungi
+
 taxonomy_summary(FUN$taxData) %>%
   kbl() %>%
   kable_styling("striped", full_width = F)
 
+# Bacteria
+
 taxonomy_summary(BAC$taxData) %>%
   kbl() %>%
   kable_styling("striped", full_width = F)
+
+```
+
+Proportion of reads which can be assigned to each taxonomic rank.
+
+```{r taxonomy reads}
+
+taxonomy_summary_reads <- function(taxData, dds) {
+  tx <-taxData[rownames(dds),]
+  nc <- counts(dds, normalize = T)
+  ac <- sum(nc)
+
+  data.table(
+    rank = c("kingdom", "phylum", "class", "order", "family", "genus", "species"),
+    "0.8" = round(unlist(lapply(cols, function(col) sum(nc[which(as.numeric(tx[[col]]) >= 0.8),]) / ac)), 2),
+    "0.65" = round(unlist(lapply(cols, function(col) sum(nc[which(as.numeric(tx[[col]]) >= 0.65),]) / ac)), 2),
+    "0.5" = round(unlist(lapply(cols, function(col) sum(nc[which(as.numeric(tx[[col]]) >= 0.5),]) / ac)), 2)
+  )
+}
+
+# Fungi
+
+# taxonomy_summary_reads(FUN$taxData, FUN$dds) %>%
+#   kbl() %>%
+#   kable_styling("striped", full_width = F)
+
+# Bacteria
+
+taxonomy_summary_reads(BAC$taxData, BAC$dds) %>%
+  kbl() %>%
+  kable_styling("striped", full_width = F)
+
+```
+
+### Taxonomy plots
+
+```{r taxonomy plots}
+
+```
+
+## Community size
+
+```{r community size}
+
+```
+
+## Alpha diversity
+
+### Alpha diversity plots
+
+```{r alpha diversity plots}
+
+# Fungal alpha diversity plot
+
+fun_alpha_plot <- plot_alpha(
+  FUN$countData, FUN$colData,
+  design = "experiment", colour = "weeks", shape = "year",
+  measures = c("Shannon", "Simpson"),
+  type = "box"
+) + scale_colour_manual(values = cbPalette) + 
+  theme(axis.title.x = element_blank()) +
+  ggtitle("Fungal α-diversity")
+
+ggsave(filename = "fungal_alpha_diversity.png", plot = fun_alpha_plot, path = FIGURES_DIR)
+
+fun_alpha_plot
+
+# Bacterial alpha diversity plot
+
+bac_alpha_plot <- plot_alpha(
+  BAC$countData, BAC$colData,
+  design = "experiment", colour = "weeks", shape = "year",
+  measures = c("Shannon", "Simpson"),
+  type = "box"
+) + scale_colour_manual(values = cbPalette) + 
+  theme(axis.title.x = element_blank()) +
+  ggtitle("Bacterial α-diversity")
+
+ggsave(filename = "bacterial_alpha_diversity.png", plot = bac_alpha_plot, path = FIGURES_DIR)
+
+bac_alpha_plot
+
+
+
+fun_alpha <- plot_alpha(FUN$countData, FUN$colData, returnData = TRUE)
+
+bac_alpha <- plot_alpha(BAC$countData, BAC$colData, returnData = TRUE)
+
+combined_alpha <- rbind(
+  fun_alpha[, Type := "Fungi"], 
+  bac_alpha[, Type := "Bacteria"]
+)
+
+
 
 ```
