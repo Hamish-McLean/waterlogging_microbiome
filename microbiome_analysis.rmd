@@ -54,7 +54,9 @@ cbPalette <- c(
 
 ## Load data
 
-```{r load-data}
+```{r load data}
+
+# Load fungal data
 
 FUN <- loadData(
   here(DATA_DIR, "DADA2", "FUN.asv_table_filtered.txt"),
@@ -63,6 +65,8 @@ FUN <- loadData(
   tax_conf = TAX_CONF,
   RHB = "FUN"
 )
+
+# Load bacterial data
 
 BAC <- loadData(
   here(DATA_DIR, "DADA2", "BAC.asv_table_filtered.txt"),
@@ -76,6 +80,10 @@ BAC <- loadData(
 colnames(FUN$countData) <- gsub("\\.raw$", "", colnames(FUN$countData))
 colnames(BAC$countData) <- gsub("\\.raw$", "", colnames(BAC$countData))
 
+# Convert all columns to factors
+FUN$colData[] <- lapply(FUN$colData, as.factor)
+BAC$colData[] <- lapply(BAC$colData, as.factor)
+
 ```
 
 ## Filter data
@@ -86,7 +94,7 @@ Plantae taxa are filtered from fungal `taxData`.
 Chloroplast and Eukaryote  taxa are filtered from bacterial `taxData`.
 Corresponding ASVs are removed from `countData`.
 
-```{r filter_taxa}
+```{r filter taxa}
 
 # Fungi: Plantae ASVs
 cat(
@@ -160,12 +168,12 @@ rarefaction_plots
 # Fungi
 med <- median(colSums(FUN$countData))
 filt <- !colSums(FUN$countData) > med * READ_FILTER
-cat("Fungi: ",sum(filt),"sample(s) with <", READ_FILTER * 100, "% of median reads\n\n")
+cat("Fungi: ", sum(filt), "sample(s) with <", READ_FILTER * 100, "% of median reads\n\n")
 
 # Bacteria
 med <- median(colSums(BAC$countData))
 filt <- !colSums(BAC$countData) > med * READ_FILTER
-cat("Bacteria: ",sum(filt),"sample(s) with <", READ_FILTER * 100, "% of median reads\n\n")
+cat("Bacteria: ", sum(filt), "sample(s) with <", READ_FILTER * 100, "% of median reads\n\n")
 
 ```
 
@@ -173,7 +181,7 @@ cat("Bacteria: ",sum(filt),"sample(s) with <", READ_FILTER * 100, "% of median r
 
 Remove ASVs with less than `r ASV_FILTER * 100` % of total reads across all samples.
 
-```{r asv_propotions}
+```{r asv propotions}
 
 asv_propotions <- function(countData, proportion){
   i <- sum(countData)
@@ -197,7 +205,7 @@ top_asvs %>%
 
 ```
 
-```{r filter_asvs}
+```{r filter asvs}
 
 # Fungi
 keep <- filter_otus(FUN$countData, ASV_FILTER)
@@ -232,7 +240,7 @@ Copy number is calculated per mg of root sample from the qPCR data.
 
 ### Prepare qPCR abundance data
 
-```{r qPCR_abundance}
+```{r qPCR abundance}
 
 ```
 
@@ -276,7 +284,7 @@ Values are centred around the mean of the copy number.
 
 ### Read and sample summary
 
-```{r read_summary}
+```{r read summary}
 
 #' @title Read summary
 #' @description Create a summary of the read counts per sample
@@ -313,7 +321,7 @@ data.table(
 
 ### ASV summary 
 
-```{r FUN asv summary}
+```{r asv summary}
 
 #' @title ASV summary
 #' @description Create a summary of the read counts per ASV
@@ -404,9 +412,11 @@ Proportion of reads which can be assigned to each taxonomic rank.
 ```{r taxonomy reads}
 
 taxonomy_summary_reads <- function(taxData, dds) {
-  tx <-taxData[rownames(dds),]
+  tx <-taxData[rownames(dds), ]
   nc <- counts(dds, normalize = T)
   ac <- sum(nc)
+  cols <- names(tx)[9:15]
+  # tx[, (cols) := lapply(.SD, as.factor), .SDcols = cols]
 
   data.table(
     rank = c("kingdom", "phylum", "class", "order", "family", "genus", "species"),
@@ -456,7 +466,7 @@ fun_alpha_plot <- plot_alpha(
   measures = c("Shannon", "Simpson"),
   type = "box"
 ) + scale_colour_manual(values = cbPalette) + 
-  theme(axis.title.x = element_blank()) +
+  # theme(axis.title.x = element_blank()) +
   ggtitle("Fungal α-diversity")
 
 ggsave(filename = "fungal_alpha_diversity.png", plot = fun_alpha_plot, path = FIGURES_DIR)
@@ -471,7 +481,7 @@ bac_alpha_plot <- plot_alpha(
   measures = c("Shannon", "Simpson"),
   type = "box"
 ) + scale_colour_manual(values = cbPalette) + 
-  theme(axis.title.x = element_blank()) +
+  # theme(axis.title.x = element_blank()) +
   ggtitle("Bacterial α-diversity")
 
 ggsave(filename = "bacterial_alpha_diversity.png", plot = bac_alpha_plot, path = FIGURES_DIR)
@@ -488,7 +498,5 @@ combined_alpha <- rbind(
   fun_alpha[, Type := "Fungi"], 
   bac_alpha[, Type := "Bacteria"]
 )
-
-
 
 ```
