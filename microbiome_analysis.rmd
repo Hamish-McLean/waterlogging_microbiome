@@ -9,6 +9,8 @@ output:
     number_sections: true
     theme: cerulean
     highlight: tango
+params:
+  pipeline: "DADA2"
 ---
 
 ```{r setup, include=FALSE}
@@ -40,6 +42,10 @@ source("functions/rarefaction.R")
 DATA_DIR    <- normalizePath(here("..", "Data"))
 FIGURES_DIR <- here("figures")
 
+# Bioinformatics pipeline (defaults to DADA2)
+# This should be set in the YAML header or passed as a parameter
+PIPELINE <- params$pipeline # DADA2 or USEARCH
+
 ASV_FILTER  <- 0.001 # ASV filter for removing low abundance ASVs
 READ_FILTER <- 0.05 # Read count filter for rarefaction
 TAX_CONF    <- 0.65 # Confidence threshold for taxonomic rank assignment
@@ -56,12 +62,25 @@ cbPalette <- c(
 
 ```{r load data}
 
+# File extensions based on pipeline
+if(PIPELINE == "DADA2") {
+  asv_ext <- ".asv_table_filtered.txt"
+  fun_tax <- "FUN.sintax.taxa"
+  bac_tax <- "BAC.sintax.taxa"
+} else if(PIPELINE == "USEARCH") {
+  asv_ext <- ".zotu_table.txt"
+  fun_tax <- "zFUN.sintax.taxa"
+  bac_tax <- "zBAC.sintax.taxa"
+} else {
+  stop("Pipeline not recognised")
+}
+
 # Load fungal data
 
 FUN <- loadData(
-  here(DATA_DIR, "DADA2", "FUN.asv_table_filtered.txt"),
+  here(DATA_DIR, PIPELINE, paste0("FUN", asv_ext)),
   here(DATA_DIR, "metadata.txt"),
-  here(DATA_DIR, "DADA2", "FUN.sintax.taxa"),
+  here(DATA_DIR, PIPELINE, fun_tax),
   tax_conf = TAX_CONF,
   RHB = "FUN"
 )
@@ -69,9 +88,9 @@ FUN <- loadData(
 # Load bacterial data
 
 BAC <- loadData(
-  here(DATA_DIR, "DADA2", "BAC.asv_table_filtered.txt"),
+  here(DATA_DIR, PIPELINE, paste0("BAC", asv_ext)),
   here(DATA_DIR, "metadata.txt"),
-  here(DATA_DIR, "DADA2", "BAC.sintax.taxa"),
+  here(DATA_DIR, PIPELINE, bac_tax),
   tax_conf = TAX_CONF,
   RHB = "BAC"
 )
