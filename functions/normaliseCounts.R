@@ -9,8 +9,12 @@
 normaliseCountData <- function(data) {
   # Calculate total OTUs per sample
   totalOTUs <- apply(data$countData, 2, sum)
-  totalOTUs <- data.frame("ID" = names(totalOTUs), "TotalOTUs" = totalOTUs, row.names = NULL)
-  
+  totalOTUs <- data.frame(
+    "ID" = names(totalOTUs),
+    "TotalOTUs" = totalOTUs,
+    row.names = NULL
+  )
+
   # Merge total OTUs with abundance data
   data[["abundance"]] <- merge(data$abundance, totalOTUs, by = "ID")
 
@@ -22,8 +26,11 @@ normaliseCountData <- function(data) {
   data$rawCountData <- data$countData
 
   # Multiply count data by adjusted total OTUs for each sample
-  abundance = t(data.frame("AdjustedTotalOTUs" = data$abundance$AdjustedTotalOTUs, row.names = data$abundance$ID))
-  data$countData<- data$rawCountData %>%
+  abundance = t(data.frame(
+    "AdjustedTotalOTUs" = data$abundance$AdjustedTotalOTUs,
+    row.names = data$abundance$ID
+  ))
+  data$countData <- data$rawCountData %>%
     mutate(across(everything(), ~ . * abundance[, cur_column()]))
 
   return(data)
