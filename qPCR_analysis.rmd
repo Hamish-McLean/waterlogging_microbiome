@@ -9,9 +9,18 @@ output:
 
 ```{r setup, include = FALSE}
 
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# Kable options
+options(
+  knitr.table.format = "html",
+  kableExtra.html.bsTable = TRUE,
+  kableExtra.bootstrap_options = c("striped", "hover", "condensed")
+)
+
 ```
 
-```{r libraries, include = FALSE}
+```{r libraries, include = TRUE}
 
 library(data.table)
 library(ggpubr)
@@ -35,7 +44,16 @@ cq_threshold <- 0.5 # Threshold for difference between triplicate Cq values
 max_cq       <- 35 # Maximum Cq value to keep
 
 here         <- here::here() # Set working directory to the location of this file
-data_dir     <- file.path(here, "..", "Data") # Data directory
+data_dir     <- file.path(here, "..", "Data") |> normalizePath() # Data directory
+fig_dir      <- file.path(here, "figures", "qPCR")
+
+```
+
+```{r functions}
+
+kbl <- function(...) {
+  kable(...) |> kable_styling()
+}
 
 ```
 
@@ -53,10 +71,11 @@ data_columns <- c(
 
 # Define the plate files
 plate_files <- list(
-  plate_1 = "Data/2025-02-26 plate 1 roots ITS.csv",
-  plate_2 = "Data/2025-03-06 plate 2 roots 16S.csv",
-  plate_3 = "Data/2025-03-10 plate 3 soil ITS.csv",
-  plate_4 = "Data/2025-03-17 plate 4 soil 16S.csv"
+  plate_1 = file.path(data_dir, "qPCR", "2025-02-26 plate 1 roots ITS.csv"),
+  plate_2 = file.path(data_dir, "qPCR", "2025-03-06 plate 2 roots 16S.csv"),
+  plate_3 = file.path(data_dir, "qPCR", "2025-03-10 plate 3 soil ITS.csv"),
+  plate_4 = file.path(data_dir, "qPCR", "2025-03-17 plate 4 soil 16S.csv"),
+  plate_5 = file.path(data_dir, "qPCR", "2025-06-17 plate 5 repeats.csv")
 )
 
 # Define sample sources
@@ -70,13 +89,12 @@ soil  <- list(11:20, 31:40, 51:60)
 #' @return A list containing the samples, standards, and NTCs as data.tables
 #'
 load_qpcr_data <- function(
-  data_dir, filename, plate,
-  header_rows = 19, columns = data_columns
+  file_path, plate, header_rows = 19, columns = data_columns
 ) {
-  file_path <- file.path(data_dir, filename)
+  # file_path <- file.path(data_dir, filename)
 
   # Read the csv file and skip the header rows
-  data <- fread(file_path, skip = header_rows, select = columns)
+  data <- suppressWarnings(fread(file = file_path, skip = header_rows, select = columns))
   setnames(data, "Starting Quantity (SQ)", "Concentration")
 
   # Add plate number to the data
@@ -119,29 +137,30 @@ load_qpcr_data <- function(
 
 }
 
-plate_1 <- load_qpcr_data(data_dir, "2025-02-26 plate 1 roots ITS.csv", 1)
-plate_2 <- load_qpcr_data(data_dir, "2025-03-06 plate 2 roots 16S.csv", 2)
-plate_3 <- load_qpcr_data(data_dir, "2025-03-10 plate 3 soil ITS.csv",  3)
-plate_4 <- load_qpcr_data(data_dir, "2025-03-17 plate 4 soil 16S.csv",  4)
+plate_1 <- load_qpcr_data(plate_files$plate_1, 1)
+plate_2 <- load_qpcr_data(plate_files$plate_2, 2)
+plate_3 <- load_qpcr_data(plate_files$plate_3, 3)
+plate_4 <- load_qpcr_data(plate_files$plate_4, 4)
+plate_5 <- load_qpcr_data(plate_files$plate_5, 5)
 
 # plates <- lapply(
 #   plate_files,
 #   function(x) load_qpcr_data(x, as.numeric(substr(names(x), nchar(x), nchar(x))))
 # )
 
-kable(head(plate_4$samples))
+# kbl(head(plate_5$samples))
 
 ```
 
 ## Remove triplicate outliers
 
 Remove outliers with $\Delta C_q >$ `r cq_threshold` between each triplicate and the median.
-Samples above a maximum $C_q$ value are also removed.
+Samples above a maximum $C_q$ value of `r max_cq` are also removed.
 If only a single replicate from a triplicate remains, the sample is removed and 
 the corresponding sample from the other dilution is also removed because 
 efficiency cannot be calculated.
 
-Removed outliers are listed in a dataframe.
+Removed outliers are returned.
 
 ```{r flag_outliers}
 
@@ -191,16 +210,20 @@ flag_outliers <- function(data, threshold = cq_threshold, cq_max = max_cq) {
 
 # Flaq outliers
 plate_1$data <- flag_outliers(plate_1$data)
-kable(plate_1$data[Outlier != "ok"][order(Sample)], digits = 2)
+kbl(plate_1$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 1 outliers")
 
 plate_2$data <- flag_outliers(plate_2$data)
-kable(plate_2$data[Outlier != "ok"][order(Sample)], digits = 2)
+kbl(plate_2$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 2 outliers")
 
 plate_3$data <- flag_outliers(plate_3$data)
-kable(plate_3$data[Outlier != "ok"][order(Sample)], digits = 2)
+kbl(plate_3$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 3 outliers")
 
 plate_4$data <- flag_outliers(plate_4$data)
-kable(plate_4$data[Outlier != "ok"][order(Sample)], digits = 2)
+kbl(plate_4$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 4 outliers")
+
+plate_5$data <- flag_outliers(plate_5$data)
+kbl(plate_5$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 5 outliers")
+
 
 # Remove outliers
 plate_1$samples   <- plate_1$data[Content == "Sample"   & Outlier == "ok"]
@@ -214,6 +237,9 @@ plate_3$standards <- plate_3$data[Content == "Standard" & Outlier == "ok"]
 
 plate_4$samples   <- plate_4$data[Content == "Sample"   & Outlier == "ok"]
 plate_4$standards <- plate_4$data[Content == "Standard" & Outlier == "ok"]
+
+plate_5$samples   <- plate_5$data[Content == "Sample"   & Outlier == "ok"]
+plate_5$standards <- plate_5$data[Content == "Standard" & Outlier == "ok"]
 
 ```
 
@@ -264,17 +290,20 @@ plate_1$stats <- calculate_summary_statistics(plate_1$samples)
 plate_2$stats <- calculate_summary_statistics(plate_2$samples)
 plate_3$stats <- calculate_summary_statistics(plate_3$samples)
 plate_4$stats <- calculate_summary_statistics(plate_4$samples)
+plate_5$stats <- calculate_summary_statistics(plate_5$samples)
 
-kable(plate_1$stats, digits = 2)
-kable(plate_2$stats, digits = 2)
-kable(plate_3$stats, digits = 2)
-kable(plate_4$stats, digits = 2)
+kbl(plate_1$stats, digits = 2, caption = "Plate 1 summary")
+kbl(plate_2$stats, digits = 2, caption = "Plate 2 summary")
+kbl(plate_3$stats, digits = 2, caption = "Plate 3 summary")
+kbl(plate_4$stats, digits = 2, caption = "Plate 4 summary")
+kbl(plate_5$stats, digits = 2, caption = "Plate 5 summary")
 
 # Add stats to samples
 plate_1$samples <- merge(plate_1$samples, plate_1$stats, c("Sample", "Target"))
 plate_2$samples <- merge(plate_2$samples, plate_2$stats, c("Sample", "Target"))
 plate_3$samples <- merge(plate_3$samples, plate_3$stats, c("Sample", "Target"))
 plate_4$samples <- merge(plate_4$samples, plate_4$stats, c("Sample", "Target"))
+plate_5$samples <- merge(plate_5$samples, plate_5$stats, c("Sample", "Target"))
 
 ```
 
@@ -306,6 +335,7 @@ efficiency_adjustment(plate_1$samples)
 efficiency_adjustment(plate_2$samples)
 efficiency_adjustment(plate_3$samples)
 efficiency_adjustment(plate_4$samples)
+efficiency_adjustment(plate_5$samples)
 
 ```
 
@@ -313,7 +343,7 @@ efficiency_adjustment(plate_4$samples)
 
 Calculate the standard curve for each qPCR plate.
 The standard curve is calculated by fitting a linear model to
-$C_q \sim \log_{10} (concentration).
+$C_q \sim \log_{10} (concentration)$.
 
 ```{r standard_curve}
 
@@ -322,6 +352,8 @@ plate_1$standards <- plate_1$standards[Concentration > 1e-5]
 plate_2$standards <- plate_2$standards[Concentration > 1e-5]
 plate_3$standards <- plate_3$standards[Concentration > 1e-5]
 plate_4$standards <- plate_4$standards[Concentration > 1e-5]
+plate_5$standards <- plate_5$standards[Concentration > 1e-5]
+
 
 #' Calculate the standard curve for a qPCR plate
 #' @param data A data.table containing qPCR standard curve data
@@ -356,11 +388,13 @@ plate_1$standard_curve <- calculate_standard_curve(plate_1$standards)
 plate_2$standard_curve <- calculate_standard_curve(plate_2$standards)
 plate_3$standard_curve <- calculate_standard_curve(plate_3$standards)
 plate_4$standard_curve <- calculate_standard_curve(plate_4$standards)
+plate_5$standard_curve <- calculate_standard_curve(plate_5$standards)
 
-kable(plate_1$standard_curve, digits = 2)
-kable(plate_2$standard_curve, digits = 2)
-kable(plate_3$standard_curve, digits = 2)
-kable(plate_4$standard_curve, digits = 2)
+kbl(plate_1$standard_curve, digits = 2, caption = "Plate 1 standard curve")
+kbl(plate_2$standard_curve, digits = 2, caption = "Plate 2 standard curve")
+kbl(plate_3$standard_curve, digits = 2, caption = "Plate 3 standard curve")
+kbl(plate_4$standard_curve, digits = 2, caption = "Plate 4 standard curve")
+kbl(plate_5$standard_curve, digits = 2, caption = "Plate 5 standard curve")
 
 ```
 
@@ -376,12 +410,14 @@ merge_efficiency(plate_1$standards, plate_1$standard_curve)
 merge_efficiency(plate_2$standards, plate_2$standard_curve)
 merge_efficiency(plate_3$standards, plate_3$standard_curve)
 merge_efficiency(plate_4$standards, plate_4$standard_curve)
+merge_efficiency(plate_5$standards, plate_5$standard_curve)
 
 # Calculate efficiency adjusted Cq values for standards
 efficiency_adjustment(plate_1$standards)
 efficiency_adjustment(plate_2$standards)
 efficiency_adjustment(plate_3$standards)
 efficiency_adjustment(plate_4$standards)
+efficiency_adjustment(plate_5$standards)
 
 ```
 
@@ -390,31 +426,48 @@ efficiency_adjustment(plate_4$standards)
 ```{r standard_curve_plots}
 
 #' Plot standard curve
-plot_standard_curve <- function(data, standard_curve) {
+plot_standard_curve <- function(data, standard_curve, name = NULL) {
+  targets <- unique(data$Target)
   types <- unique(data$Type)
   plots <- list()
-  for (type in types) {
-    plots[[type]] <- ggscatter(
-      data[Type == type], x = "log10_concentration", y = "Cq_adjusted",
-      add = "reg.line", conf.int = TRUE
-    ) +
-      stat_regline_equation(
-        aes(label = paste(
-          after_stat(eq.label), after_stat(rr.label), sep = "~~~~"
-        )),
-        label.x = -2.5, label.y = 32
-      ) +
-      ggtitle(paste0("Plate ", data$Plate[1], " ", type, " ", data$Target[1])) +
-      xlab(TeX("$\\log_{10}(Concentration)$")) +
-      ylab(TeX("$C_q$"))
+  i <- 1
+  for (target in targets) {
+    for (type in types) {
+      subset_data <- data[Target == target & Type == type]
+      if (nrow(subset_data) > 0) {
+        plots[[i]] <- ggscatter(
+          subset_data, x = "log10_concentration", y = "Cq",
+          add = "reg.line", conf.int = TRUE
+        ) +
+          stat_regline_equation(
+            aes(label = paste(
+              after_stat(eq.label), after_stat(rr.label), sep = "~~~~"
+            )),
+            label.x = -2.5, label.y = 32
+          ) +
+          ggtitle(paste0(
+            "Plate ", subset_data$Plate[1], " ", type, " ", target
+          )) +
+          xlab(TeX("$\\log_{10}(Concentration)$")) +
+          ylab(TeX("$C_q$"))
+        i <- i + 1
+      }
+    }
   }
-  ggarrange(plotlist = plots)
+  plot <- ggarrange(plotlist = plots)
+  filename <- if (!is.null(name)) name else paste0("plate_", data$Plate[1], "_standard_curve.png")
+  ggsave(
+    plot = plot, path = fig_dir, width = 8, height = 6,
+    filename = filename
+  )
+  plot
 }
 
 plot_standard_curve(plate_1$standards, plate_1$standard_curve)
 plot_standard_curve(plate_2$standards, plate_2$standard_curve)
 plot_standard_curve(plate_3$standards, plate_3$standard_curve)
 plot_standard_curve(plate_4$standards, plate_4$standard_curve)
+plot_standard_curve(plate_5$standards, plate_5$standard_curve)
 
 ```
 
@@ -424,15 +477,20 @@ combined_standard <- rbindlist(list(
   plate_1$standards,
   plate_2$standards,
   plate_3$standards,
-  plate_4$standards
+  plate_4$standards,
+  plate_5$standards
 ))
 
 combined_standard_curve <- calculate_standard_curve(combined_standard)
 
-kable(combined_standard_curve, digits = 2)
+kbl(combined_standard_curve, digits = 2)
 
-plot_standard_curve(combined_standard[Target == "ITS"], combined_standard_curve)
-plot_standard_curve(combined_standard[Target == "16S"], combined_standard_curve)
+plot_standard_curve(
+  combined_standard, combined_standard_curve,
+  name = "combined_standard_curves.png"
+)
+
+combined_standard[Target == "ITS" & Type == "Soil" & Dilution == 1000]
 
 bac_initial_copies <- 1e7
 fun_initial_copies <- 1e5
@@ -458,6 +516,11 @@ ggscatter(
   xlab(TeX("$\\log_{10}(TCN)$")) +
   ylab(TeX("$C_q$"))
 
+ggsave(
+  plot = last_plot(), path = fig_dir, width = 8, height = 6,
+  filename = "TCN_standards.png"
+)
+
 # Plot TCN vs Cq_adjusted for each combination of Target and Type
 # ggplot(combined_standard, aes(x = log10(TCN), y = Cq_adjusted)) +
 #   geom_point() +
@@ -478,7 +541,7 @@ ggscatter(
 ```{r standard_copy_number}
 
 # Calculate TCN for standards
-for (plate in list(plate_1, plate_2, plate_3, plate_4)) {
+for (plate in list(plate_1, plate_2, plate_3, plate_4, plate_5)) {
   plate$standards[Target == "ITS", TCN := Concentration * fun_initial_copies]
   plate$standards[Target == "16S", TCN := Concentration * bac_initial_copies]
   plate$standards[, log10_TCN := log10(TCN)]
@@ -487,7 +550,7 @@ for (plate in list(plate_1, plate_2, plate_3, plate_4)) {
 plate_1$standards
 
 # Calculate standard curves for each plate using TCN
-for (plate in list(plate_1, plate_2, plate_3, plate_4)) {
+for (plate in list(plate_1, plate_2, plate_3, plate_4, plate_5)) {
   plate$tcn_standard_curve <- calculate_standard_curve(
     plate$standards, adjust_cq = TRUE, use_tcn = TRUE
   )
@@ -505,11 +568,15 @@ plate_3$tcn_standard_curve <- calculate_standard_curve(
 plate_4$tcn_standard_curve <- calculate_standard_curve(
   plate_4$standards, adjust_cq = TRUE, use_tcn = TRUE
 )
+plate_5$tcn_standard_curve <- calculate_standard_curve(
+  plate_5$standards, adjust_cq = TRUE, use_tcn = TRUE
+)
 
 plate_1$tcn_standard_curve
 plate_2$tcn_standard_curve
 plate_3$tcn_standard_curve
 plate_4$tcn_standard_curve
+plate_5$tcn_standard_curve
 
 ```
 
@@ -534,10 +601,11 @@ repeats <- function(data) {
   ]
 }
 
-kable(repeats(plate_1$data))
-kable(repeats(plate_2$data))
-kable(repeats(plate_3$data))
-kable(repeats(plate_4$data))
+kbl(repeats(plate_1$data))
+kbl(repeats(plate_2$data))
+kbl(repeats(plate_3$data))
+kbl(repeats(plate_4$data))
+kbl(repeats(plate_5$data))
 
 ```
 
@@ -560,7 +628,7 @@ calculate_tcn <- function(data, standard_curve) {
   ]
 }
 
-for (plate in list(plate_1, plate_2, plate_3, plate_4)) {
+for (plate in list(plate_1, plate_2, plate_3, plate_4, plate_5)) {
   calculate_tcn(plate$samples, plate$tcn_standard_curve)
 }
 
@@ -603,7 +671,8 @@ combined_data <- rbindlist(list(
   plate_1$samples,
   plate_2$samples,
   plate_3$samples,
-  plate_4$samples
+  plate_4$samples,
+  plate_5$samples
 ))
 
 ```
@@ -628,6 +697,23 @@ ggplot(combined_data, aes(x = Sample, y = log10(TCN))) +
   ylab("TCN") +
   theme("ggpubr")
 
+ggsave(
+  plot = last_plot(), path = fig_dir, width = 8, height = 6,
+  filename = "combined_sample_tcn.png"
+)
+
+ggscatter(
+  combined_data[, Plate := factor(Plate)], 
+  x = "Sample", y = "Efficiency", color = "Plate"
+) + 
+  facet_wrap(~ Target, ncol = 1) +
+  ggtitle("Sample Efficiency")
+
+ggsave(
+  plot = last_plot(), path = fig_dir, width = 8, height = 6,
+  filename = "combined_sample_efficiency.png"
+)
+
 ```
 
 ## Summary
@@ -644,14 +730,14 @@ summary <- combined_data[,
 ]
 
 # Combined with sample mass
-sample_mass <- fread("Data/sample_mass.csv")[, Sample := sprintf("%02d", Sample)]
+sample_mass <- fread(file.path(data_dir, "qPCR", "sample_mass.csv"))[, Sample := sprintf("%02d", Sample)]
 summary <- merge(summary, sample_mass, by = "Sample")
 
 summary[, TCN_mg := mean_TCN / (mg * 2 / 100)]
 
-kable(summary)
+kbl(summary)
 
 # Export as csv
-fwrite(summary, "Data/abundance.csv")
+fwrite(summary, file.path(data_dir, "abundance.csv"))
 
 ```
