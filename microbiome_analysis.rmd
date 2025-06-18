@@ -563,7 +563,9 @@ combined_alpha <- rbind(
 formula <- metric ~ treatment + timepoint + treatment:timepoint + experiment + treatment:experiment + (year + 1 | plot / experiment) + (1 | block / experiment)
 
 # Timepoint model for E1
-formula_t <- metric ~ treatment * timepoint + (year + 1 | plot) + (1 | block)
+formula_t <- metric ~ treatment * timepoint + (1 | plot) + (1 | block)
+
+# formula_t <- metric ~ treatment * timepoint + (1 | block / plot)
 
 # Experiment model without timepoint 2
 formula_e <- metric ~ treatment * experiment + (1 | block / experiment)
