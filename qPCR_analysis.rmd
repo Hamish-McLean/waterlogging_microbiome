@@ -7,6 +7,29 @@ output:
     highlight: haddock
 ---
 
+## Overview
+
+Load qPCR data from csv files exported from the qPCR machine.
+Separate the qPCR data into samples, standards, and NTCs.
+Remove outliers from the triplicates based on a standard deviation threshold 
+and maximum $C_q$ value.
+Calculate standard curves for the standards on each plate.
+Calculate efficiency of each qPCR reactions.
+
+## Setup
+
+```{r libraries, include = FALSE}
+
+library(data.table)
+library(ggpubr)
+library(here)
+library(kableExtra)
+library(knitr)
+library(latex2exp)
+library(rmarkdown)
+
+```
+
 ```{r setup, include = FALSE}
 
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
@@ -20,32 +43,14 @@ options(
 
 ```
 
-```{r libraries, include = TRUE}
-
-library(data.table)
-library(ggpubr)
-library(here)
-library(kableExtra)
-library(knitr)
-library(latex2exp)
-library(rmarkdown)
-
-```
-
-Load qPCR data from csv files exported from the qPCR machine.
-Separate the qPCR data into samples, standards, and NTCs.
-Remove outliers from the triplicates based on a standard deviation threshold and maximum $C_q$ value.
-Caclulate standard curves for the standards on each plate.
-Calculate efficiency of each qPCR reactions.
-
 ```{r variables}
 
 cq_threshold <- 0.5 # Threshold for difference between triplicate Cq values
 max_cq       <- 35 # Maximum Cq value to keep
 
-here         <- here::here() # Set working directory to the location of this file
-data_dir     <- file.path(here, "..", "Data") |> normalizePath() # Data directory
-fig_dir      <- file.path(here, "figures", "qPCR")
+here         <- here::here() # Set working directory to location of this file
+data_dir     <- file.path(here, "..", "Data") |> normalizePath() # Data
+fig_dir      <- file.path(here, "figures", "qPCR") # Figures
 
 ```
 
@@ -60,27 +65,10 @@ kbl <- function(...) {
 ## Load qPCR Data
 
 Load qPCR data from csv files exported from the qPCR machine.
-Store data from each plate in a list containing data.tables for samples, standards, and NTCs.
+Store data from each plate in a list containing data.tables for samples, 
+standards, and NTCs.
 
 ```{r data}
-# Define the columns to select from the csv file
-data_columns <- c(
-  "Well", "Target", "Content", "Replicate", "Sample", "Dilution",
-  "Cq", "Starting Quantity (SQ)"
-)
-
-# Define the plate files
-plate_files <- list(
-  plate_1 = file.path(data_dir, "qPCR", "2025-02-26 plate 1 roots ITS.csv"),
-  plate_2 = file.path(data_dir, "qPCR", "2025-03-06 plate 2 roots 16S.csv"),
-  plate_3 = file.path(data_dir, "qPCR", "2025-03-10 plate 3 soil ITS.csv"),
-  plate_4 = file.path(data_dir, "qPCR", "2025-03-17 plate 4 soil 16S.csv"),
-  plate_5 = file.path(data_dir, "qPCR", "2025-06-17 plate 5 repeats.csv")
-)
-
-# Define sample sources
-roots <- list(01:10, 21:30, 41:50)
-soil  <- list(11:20, 31:40, 51:60)
 
 #' Load qPCR data from a csv file
 #' @param file_path The path to the csv file
@@ -88,16 +76,19 @@ soil  <- list(11:20, 31:40, 51:60)
 #' @param columns The columns to select
 #' @return A list containing the samples, standards, and NTCs as data.tables
 #'
-load_qpcr_data <- function(
-  file_path, plate, header_rows = 19, columns = data_columns
-) {
-  # file_path <- file.path(data_dir, filename)
+load_qpcr_data <- function(file_path, header_rows = 19, columns = data_cols) {
+
 
   # Read the csv file and skip the header rows
-  data <- suppressWarnings(fread(file = file_path, skip = header_rows, select = columns))
+  data <- fread(
+    file = file_path, skip = header_rows, select = columns,
+    na.strings = c("", "NA", "NaN", "None"), fill = TRUE
+  )
   setnames(data, "Starting Quantity (SQ)", "Concentration")
 
+  # Get plate number from file name
   # Add plate number to the data
+  plate <- as.numeric(gsub(".* plate (\\d+).*", "\\1", basename(file_path)))
   data[, Plate := plate]
 
   # Rename Content values
@@ -137,18 +128,33 @@ load_qpcr_data <- function(
 
 }
 
-plate_1 <- load_qpcr_data(plate_files$plate_1, 1)
-plate_2 <- load_qpcr_data(plate_files$plate_2, 2)
-plate_3 <- load_qpcr_data(plate_files$plate_3, 3)
-plate_4 <- load_qpcr_data(plate_files$plate_4, 4)
-plate_5 <- load_qpcr_data(plate_files$plate_5, 5)
 
-# plates <- lapply(
-#   plate_files,
-#   function(x) load_qpcr_data(x, as.numeric(substr(names(x), nchar(x), nchar(x))))
-# )
+# Define the columns to select from the csv file
+data_cols <- c(
+  "Well", "Target", "Content", "Replicate", "Sample", "Dilution",
+  "Cq", "Starting Quantity (SQ)"
+)
 
-# kbl(head(plate_5$samples))
+
+# Define the plate files
+plate_files <- list(
+  plate_1 = file.path(data_dir, "qPCR", "2025-02-26 plate 1 roots ITS.csv"),
+  plate_2 = file.path(data_dir, "qPCR", "2025-03-06 plate 2 roots 16S.csv"),
+  plate_3 = file.path(data_dir, "qPCR", "2025-03-10 plate 3 soil ITS.csv"),
+  plate_4 = file.path(data_dir, "qPCR", "2025-03-17 plate 4 soil 16S.csv"),
+  plate_5 = file.path(data_dir, "qPCR", "2025-06-17 plate 5 repeats.csv")
+)
+
+
+# Define sample sources
+roots <- list(01:10, 21:30, 41:50)
+soil  <- list(11:20, 31:40, 51:60)
+
+
+# Load qPCR data from csv files
+# Use suppressWarnings to ignore warnings about missing values in Cq
+# This is expected for NTCs and some samples with no amplification
+plates <- suppressWarnings(lapply(plate_files, load_qpcr_data))
 
 ```
 
@@ -162,7 +168,7 @@ efficiency cannot be calculated.
 
 Removed outliers are returned.
 
-```{r flag_outliers}
+```{r flag_outliers, results = "asis"}
 
 #' Flag outliers from a qPCR plate with Cq standard deviation > threshold
 #' or the Cq value above a maximum value or na Cq values.
@@ -208,38 +214,43 @@ flag_outliers <- function(data, threshold = cq_threshold, cq_max = max_cq) {
   return(outliers)
 }
 
-# Flaq outliers
-plate_1$data <- flag_outliers(plate_1$data)
-kbl(plate_1$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 1 outliers")
 
-plate_2$data <- flag_outliers(plate_2$data)
-kbl(plate_2$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 2 outliers")
-
-plate_3$data <- flag_outliers(plate_3$data)
-kbl(plate_3$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 3 outliers")
-
-plate_4$data <- flag_outliers(plate_4$data)
-kbl(plate_4$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 4 outliers")
-
-plate_5$data <- flag_outliers(plate_5$data)
-kbl(plate_5$data[Outlier != "ok"][order(Sample)], digits = 2, caption = "Plate 5 outliers")
+# Flag outliers
+plates <- lapply(plates, function(plate) {
+  plate$data <- flag_outliers(plate$data)
+  plate
+})
 
 
 # Remove outliers
-plate_1$samples   <- plate_1$data[Content == "Sample"   & Outlier == "ok"]
-plate_1$standards <- plate_1$data[Content == "Standard" & Outlier == "ok"]
+plates <- lapply(plates, function(plate) {
+  plate$samples   <- plate$data[Content == "Sample"   & Outlier == "ok"]
+  plate$standards <- plate$data[Content == "Standard" & Outlier == "ok"]
+  plate
+})
 
-plate_2$samples   <- plate_2$data[Content == "Sample"   & Outlier == "ok"]
-plate_2$standards <- plate_2$data[Content == "Standard" & Outlier == "ok"]
+# kbl(
+#   plates$plate_1$data[Outlier != "ok"][order(Sample)],
+#   caption = "Plate 1 outliers", digits = 2
+# )
 
-plate_3$samples   <- plate_3$data[Content == "Sample"   & Outlier == "ok"]
-plate_3$standards <- plate_3$data[Content == "Standard" & Outlier == "ok"]
+# Print outliers
+lapply(plates, function(plate) {
+  print(kbl(
+    plate$data[Outlier != "ok"][order(Sample)],
+    caption = paste("Plate", plate$plate, "outliers"),
+    digits = 2
+  ))
+  cat("<br><br>\n")
+})
 
-plate_4$samples   <- plate_4$data[Content == "Sample"   & Outlier == "ok"]
-plate_4$standards <- plate_4$data[Content == "Standard" & Outlier == "ok"]
-
-plate_5$samples   <- plate_5$data[Content == "Sample"   & Outlier == "ok"]
-plate_5$standards <- plate_5$data[Content == "Standard" & Outlier == "ok"]
+# for(plate in plates) {
+#   print(kbl(
+#     plate$data[Outlier != "ok"][order(Sample)],
+#     caption = paste("Plate", plate$plate, "outliers"),
+#     digits = 2
+#   ))
+# }
 
 ```
 
@@ -261,6 +272,7 @@ Perfect efficiency is 2.
 efficiency <- function(slope) {
   10^(-1 / slope)
 }
+
 
 #' Calculate summary statistics for each sample in a qPCR plate
 #' @param data A data.table containing qPCR data
@@ -285,25 +297,25 @@ calculate_summary_statistics <- function(data) {
   ][order(as.numeric(Sample))]
 }
 
-# Calculate summary statistics
-plate_1$stats <- calculate_summary_statistics(plate_1$samples)
-plate_2$stats <- calculate_summary_statistics(plate_2$samples)
-plate_3$stats <- calculate_summary_statistics(plate_3$samples)
-plate_4$stats <- calculate_summary_statistics(plate_4$samples)
-plate_5$stats <- calculate_summary_statistics(plate_5$samples)
 
-kbl(plate_1$stats, digits = 2, caption = "Plate 1 summary")
-kbl(plate_2$stats, digits = 2, caption = "Plate 2 summary")
-kbl(plate_3$stats, digits = 2, caption = "Plate 3 summary")
-kbl(plate_4$stats, digits = 2, caption = "Plate 4 summary")
-kbl(plate_5$stats, digits = 2, caption = "Plate 5 summary")
+# Calculate summary statistics
+plates <- lapply(plates, function(plate) {
+  plate$stats <- calculate_summary_statistics(plate$samples)
+  plate
+})
+
+
+# Print summary statistics
+for (plate in plates) {
+  kbl(plate$stats, caption = paste("Plate", plate$plate, "summary"), digits = 2)
+}
+
 
 # Add stats to samples
-plate_1$samples <- merge(plate_1$samples, plate_1$stats, c("Sample", "Target"))
-plate_2$samples <- merge(plate_2$samples, plate_2$stats, c("Sample", "Target"))
-plate_3$samples <- merge(plate_3$samples, plate_3$stats, c("Sample", "Target"))
-plate_4$samples <- merge(plate_4$samples, plate_4$stats, c("Sample", "Target"))
-plate_5$samples <- merge(plate_5$samples, plate_5$stats, c("Sample", "Target"))
+plates <- lapply(plates, function(plate) {
+  plate$samples <- merge(plate$samples, plate$stats, by = c("Sample", "Target"))
+  plate
+})
 
 ```
 
@@ -330,12 +342,12 @@ efficiency_adjustment <- function(data) {
   data[, Cq_adjusted := ifelse(Efficiency < 2, log2(Efficiency ^ Cq), Cq)]
 }
 
+
 # Calculate efficiency adjusted Cq values
-efficiency_adjustment(plate_1$samples)
-efficiency_adjustment(plate_2$samples)
-efficiency_adjustment(plate_3$samples)
-efficiency_adjustment(plate_4$samples)
-efficiency_adjustment(plate_5$samples)
+plates <- lapply(plates, function(plate) {
+  efficiency_adjustment(plate$samples)
+  plate
+})
 
 ```
 
@@ -348,11 +360,10 @@ $C_q \sim \log_{10} (concentration)$.
 ```{r standard_curve}
 
 # Remove dilutions < 10^-5 from standards
-plate_1$standards <- plate_1$standards[Concentration > 1e-5]
-plate_2$standards <- plate_2$standards[Concentration > 1e-5]
-plate_3$standards <- plate_3$standards[Concentration > 1e-5]
-plate_4$standards <- plate_4$standards[Concentration > 1e-5]
-plate_5$standards <- plate_5$standards[Concentration > 1e-5]
+plates <- lapply(plates, function(plate) {
+  plate$standards <- plate$standards[Concentration > 1e-5]
+  plate
+})
 
 
 #' Calculate the standard curve for a qPCR plate
@@ -373,7 +384,6 @@ calculate_standard_curve <- function(data, adjust_cq = FALSE, use_tcn = FALSE) {
     efficiency <- efficiency(slope)
     list(
       Plate      = Plate[1],
-      Target     = Target[1],
       N          = .N,
       Intercept  = intercept,
       Slope      = slope,
@@ -383,18 +393,21 @@ calculate_standard_curve <- function(data, adjust_cq = FALSE, use_tcn = FALSE) {
   }, by = .(Target, Type)]
 }
 
-# Calculate the standard curve
-plate_1$standard_curve <- calculate_standard_curve(plate_1$standards)
-plate_2$standard_curve <- calculate_standard_curve(plate_2$standards)
-plate_3$standard_curve <- calculate_standard_curve(plate_3$standards)
-plate_4$standard_curve <- calculate_standard_curve(plate_4$standards)
-plate_5$standard_curve <- calculate_standard_curve(plate_5$standards)
 
-kbl(plate_1$standard_curve, digits = 2, caption = "Plate 1 standard curve")
-kbl(plate_2$standard_curve, digits = 2, caption = "Plate 2 standard curve")
-kbl(plate_3$standard_curve, digits = 2, caption = "Plate 3 standard curve")
-kbl(plate_4$standard_curve, digits = 2, caption = "Plate 4 standard curve")
-kbl(plate_5$standard_curve, digits = 2, caption = "Plate 5 standard curve")
+# Calculate standard curves
+plates <- lapply(plates, function(plate) {
+  plate$standard_curve <- calculate_standard_curve(plate$standards)
+  plate
+})
+
+
+# Print standard curves
+for (plate in plates) {
+  kbl(
+    plate$standard_curve, digits = 2, 
+    caption = paste("Plate", plate$plate, "standard curve")
+  )
+}
 
 ```
 
@@ -402,22 +415,18 @@ kbl(plate_5$standard_curve, digits = 2, caption = "Plate 5 standard curve")
 
 ```{r standard_efficiency_adjustment}
 
-merge_efficiency <- function(data, standard_curve) {
-  data[standard_curve, on = .(Target, Type), Efficiency := i.Efficiency]
-}
+# Merge efficiency with standards
+plates <- lapply(plates, function(plate) {
+  plate$standards <- plate$standards[plate$standard_curve, on = .(Target, Type, Plate)]
+  plate
+})
 
-merge_efficiency(plate_1$standards, plate_1$standard_curve)
-merge_efficiency(plate_2$standards, plate_2$standard_curve)
-merge_efficiency(plate_3$standards, plate_3$standard_curve)
-merge_efficiency(plate_4$standards, plate_4$standard_curve)
-merge_efficiency(plate_5$standards, plate_5$standard_curve)
 
 # Calculate efficiency adjusted Cq values for standards
-efficiency_adjustment(plate_1$standards)
-efficiency_adjustment(plate_2$standards)
-efficiency_adjustment(plate_3$standards)
-efficiency_adjustment(plate_4$standards)
-efficiency_adjustment(plate_5$standards)
+plates <- lapply(plates, function(plate) {
+  efficiency_adjustment(plate$standards)
+  plate
+})
 
 ```
 
@@ -463,23 +472,16 @@ plot_standard_curve <- function(data, standard_curve, name = NULL) {
   plot
 }
 
-plot_standard_curve(plate_1$standards, plate_1$standard_curve)
-plot_standard_curve(plate_2$standards, plate_2$standard_curve)
-plot_standard_curve(plate_3$standards, plate_3$standard_curve)
-plot_standard_curve(plate_4$standards, plate_4$standard_curve)
-plot_standard_curve(plate_5$standards, plate_5$standard_curve)
+
+for (plate in plates) {
+  plot_standard_curve(plate$standards, plate$standard_curve)
+}
 
 ```
 
 ```{r combined_standard_curve}
 
-combined_standard <- rbindlist(list(
-  plate_1$standards,
-  plate_2$standards,
-  plate_3$standards,
-  plate_4$standards,
-  plate_5$standards
-))
+combined_standard <- rbindlist(lapply(plates, function(plate) plate$standards))
 
 combined_standard_curve <- calculate_standard_curve(combined_standard)
 
@@ -541,42 +543,30 @@ ggsave(
 ```{r standard_copy_number}
 
 # Calculate TCN for standards
-for (plate in list(plate_1, plate_2, plate_3, plate_4, plate_5)) {
+plates <- lapply(plates, function(plate) {
   plate$standards[Target == "ITS", TCN := Concentration * fun_initial_copies]
   plate$standards[Target == "16S", TCN := Concentration * bac_initial_copies]
   plate$standards[, log10_TCN := log10(TCN)]
-}
+  plate
+})
 
-plate_1$standards
 
 # Calculate standard curves for each plate using TCN
-for (plate in list(plate_1, plate_2, plate_3, plate_4, plate_5)) {
+plates <- lapply(plates, function(plate) {
   plate$tcn_standard_curve <- calculate_standard_curve(
     plate$standards, adjust_cq = TRUE, use_tcn = TRUE
   )
+  plate
+})
+
+
+# Print TCN standard curves
+for (plate in plates) {
+  kbl(
+    plate$tcn_standard_curve, digits = 2,
+    caption = paste("Plate", plate$plate, "TCN standard curve")
+  )
 }
-
-plate_1$tcn_standard_curve <- calculate_standard_curve(
-  plate_1$standards, adjust_cq = TRUE, use_tcn = TRUE
-)
-plate_2$tcn_standard_curve <- calculate_standard_curve(
-  plate_2$standards, adjust_cq = TRUE, use_tcn = TRUE
-)
-plate_3$tcn_standard_curve <- calculate_standard_curve(
-  plate_3$standards, adjust_cq = TRUE, use_tcn = TRUE
-)
-plate_4$tcn_standard_curve <- calculate_standard_curve(
-  plate_4$standards, adjust_cq = TRUE, use_tcn = TRUE
-)
-plate_5$tcn_standard_curve <- calculate_standard_curve(
-  plate_5$standards, adjust_cq = TRUE, use_tcn = TRUE
-)
-
-plate_1$tcn_standard_curve
-plate_2$tcn_standard_curve
-plate_3$tcn_standard_curve
-plate_4$tcn_standard_curve
-plate_5$tcn_standard_curve
 
 ```
 
@@ -601,11 +591,14 @@ repeats <- function(data) {
   ]
 }
 
-kbl(repeats(plate_1$data))
-kbl(repeats(plate_2$data))
-kbl(repeats(plate_3$data))
-kbl(repeats(plate_4$data))
-kbl(repeats(plate_5$data))
+
+for (plate in plates) {
+  kbl(
+    repeats(plate$samples),
+    caption = paste("Plate", plate$plate, "repeats"),
+    digits = 2
+  )
+}
 
 ```
 
@@ -628,9 +621,11 @@ calculate_tcn <- function(data, standard_curve) {
   ]
 }
 
-for (plate in list(plate_1, plate_2, plate_3, plate_4, plate_5)) {
-  calculate_tcn(plate$samples, plate$tcn_standard_curve)
-}
+
+plates <- lapply(plates, function(plate) {
+  calculate_tcn(plate$samples, plate$standard_curve)
+  plate
+})
 
 ```
 
@@ -651,9 +646,14 @@ sample_summary <- function(data) {
   ]
 }
 
-sample_summary(plate_1$samples)
 
-ggplot(plate_2$samples, aes(x = Sample, y = log10(TCN))) +
+plates <- lapply(plates, function(plate) {
+  plate$samples_summary <- sample_summary(plate$samples)
+  plate
+})
+
+
+ggplot(plates$plate_2$samples, aes(x = Sample, y = log10(TCN))) +
   geom_boxplot() +
   geom_jitter(width = 0.2, alpha = 0.5) +
   ggtitle("Sample TCN") +
@@ -667,13 +667,7 @@ ggplot(plate_2$samples, aes(x = Sample, y = log10(TCN))) +
 
 ```{r combined_data}
 
-combined_data <- rbindlist(list(
-  plate_1$samples,
-  plate_2$samples,
-  plate_3$samples,
-  plate_4$samples,
-  plate_5$samples
-))
+combined_data <- rbindlist(lapply(plates, function(plate) plate$samples))
 
 ```
 
