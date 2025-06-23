@@ -18,6 +18,23 @@ Calculate efficiency of each qPCR reactions.
 
 ## Setup
 
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# Kable options
+options(
+  # kableExtra.html.bsTable = TRUE,
+  # kableExtra.bootstrap_options = c("striped", "hover", "condensed"),
+  # kableExtra_view_html = FALSE,
+  # knitr.table.format = "html",
+  viewer = NULL # Disable viewer to avoid opening in browser
+)
+
+Sys.setenv("BROWSER" = "false")
+
+```
+
 ```{r libraries, include = FALSE}
 
 library(data.table)
@@ -27,19 +44,6 @@ library(kableExtra)
 library(knitr)
 library(latex2exp)
 library(rmarkdown)
-
-```
-
-```{r setup, include = FALSE}
-
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
-
-# Kable options
-options(
-  knitr.table.format = "html",
-  kableExtra.html.bsTable = TRUE,
-  kableExtra.bootstrap_options = c("striped", "hover", "condensed")
-)
 
 ```
 
@@ -492,7 +496,7 @@ plot_standard_curve(
   name = "combined_standard_curves.png"
 )
 
-combined_standard[Target == "ITS" & Type == "Soil" & Dilution == 1000]
+# combined_standard[Target == "ITS" & Type == "Soil" & Dilution == 1000]
 
 bac_initial_copies <- 1e7
 fun_initial_copies <- 1e5
@@ -554,7 +558,7 @@ plates <- lapply(plates, function(plate) {
 # Calculate standard curves for each plate using TCN
 plates <- lapply(plates, function(plate) {
   plate$tcn_standard_curve <- calculate_standard_curve(
-    plate$standards, adjust_cq = TRUE, use_tcn = TRUE
+    plate$standards, adjust_cq = FALSE, use_tcn = TRUE
   )
   plate
 })
@@ -592,13 +596,25 @@ repeats <- function(data) {
 }
 
 
-for (plate in plates) {
-  kbl(
-    repeats(plate$samples),
-    caption = paste("Plate", plate$plate, "repeats"),
-    digits = 2
-  )
-}
+# for (plate in plates) {
+#   kbl(
+#     repeats(plate$samples),
+#     caption = paste("Plate", plate$plate, "repeats"),
+#     digits = 2
+#   )
+# }
+
+kbl(
+  repeats(plates$plate_4$samples),
+  caption = paste("Plate", plates$plate_4$plate, "repeats"),
+  digits = 2
+)
+
+kbl(
+  repeats(plates$plate_5$samples),
+  caption = paste("Plate", plates$plate_5$plate, "repeats"),
+  digits = 2
+)
 
 ```
 
@@ -614,16 +630,20 @@ $$
 
 #` Calculate TCN for samples
 calculate_tcn <- function(data, standard_curve) {
+  standard_curve <- standard_curve[Type == "Root"] # only use root standard curve
   data[
     standard_curve,
-    on = .(Target, Type),
-    TCN := Dilution * 10 ^ ((Cq_adjusted - i.Intercept) / i.Slope)
+    on = .(Target),
+    ':='(
+      TCN = Dilution * 10 ^ ((Cq - i.Intercept) / i.Slope),
+      TCN_adjusted = Dilution * 10 ^ ((Cq_adjusted - i.Intercept) / i.Slope)
+    )
   ]
 }
 
 
 plates <- lapply(plates, function(plate) {
-  calculate_tcn(plate$samples, plate$standard_curve)
+  calculate_tcn(plate$samples, plate$tcn_standard_curve)
   plate
 })
 
@@ -653,13 +673,19 @@ plates <- lapply(plates, function(plate) {
 })
 
 
-ggplot(plates$plate_2$samples, aes(x = Sample, y = log10(TCN))) +
+ggplot(plates$plate_5$samples, aes(x = Sample, y = log10(TCN))) +
   geom_boxplot() +
   geom_jitter(width = 0.2, alpha = 0.5) +
   ggtitle("Sample TCN") +
   xlab("Sample") +
   ylab("TCN") +
-  theme("ggpubr")
+  theme("ggpubr") +
+  facet_wrap(~ Target, ncol = 1)
+
+ggsave(
+  plot = last_plot(), path = fig_dir, width = 8, height = 6,
+  filename = "sample_tcn.png"
+)
 
 ```
 
