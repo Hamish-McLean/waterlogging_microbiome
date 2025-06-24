@@ -16,29 +16,42 @@ params:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 options(viewer = NULL)
+options(kableExtra_view_html = interactive())
 if (!exists("params")) params <- list(pipeline = "DADA2")
 ```
 
 ```{r libraries}
 
 library(buildmer)
+library(car)
 library(data.table)
 library(DESeq2)
 library(dplyr)
+library(emmeans)
 library(ggpubr)
 library(gridExtra)
 library(here)
 library(kableExtra)
 library(lme4)
 library(lmPerm)
+library(performance)
 library(permutes)
+library(see)
 library(vegan)
 library(viridis)
 
-source("functions/loadme.R")
-source("functions/metabarcoding.R")
-source("functions/metafuncs.R")
-source("functions/rarefaction.R")
+```
+
+```{r functions}
+
+here <- here::here()
+
+FUNC_DIR <- here("functions")
+
+source(file.path(FUNC_DIR, "loadme.R"))
+source(file.path(FUNC_DIR, "metabarcoding.R"))
+source(file.path(FUNC_DIR, "metafuncs.R"))
+source(file.path(FUNC_DIR, "rarefaction.R"))
 
 ```
 
@@ -59,6 +72,14 @@ cbPalette <- c(
   "#000000", "#E69F00", "#56B4E9", "#009E73", 
   "#F0E442", "#0072B2", "#D55E00", "#CC79A7"
 )
+
+# Model designs
+# Timepoint model for E1
+# formula_t <- y ~ treatment * timepoint + (1 | plot) + (1 | block)
+T_DESIGN <- y ~ treatment * timepoint + (1 | block)
+
+# Experiment model without timepoint 2
+E_DESIGN <- y ~ treatment * experiment + (1 | block / experiment)
 
 ```
 
@@ -102,6 +123,10 @@ BAC <- loadData(
 # Remove ".raw" from the end of the colnames of the countData
 colnames(FUN$countData) <- gsub("\\.raw$", "", colnames(FUN$countData))
 colnames(BAC$countData) <- gsub("\\.raw$", "", colnames(BAC$countData))
+
+# Add a new column to colData that combines experiment and timepoint
+FUN$colData$exp_tp <- paste(FUN$colData$experiment, FUN$colData$timepoint, sep = "|")
+BAC$colData$exp_tp <- paste(BAC$colData$experiment, BAC$colData$timepoint, sep = "|")
 
 # Convert all columns to factors
 FUN$colData[] <- lapply(FUN$colData, as.factor)
@@ -228,10 +253,18 @@ top_asvs %>%
 
 ```
 
+Keep only ASVs with at least 10 reads in at least 2 samples.
+
 ```{r filter asvs}
 
+filter_asvs <- function(countData, min_count = 10, min_samples = 2) {
+  keep <- rowSums(countData >= min_count) >= min_samples
+  names(keep[keep])
+}
+
 # Fungi
-keep <- filter_otus(FUN$countData, ASV_FILTER)
+# keep <- filter_otus(FUN$countData, ASV_FILTER)
+keep <- filter_asvs(FUN$countData)
 cat(
   "Fungi:\n", 
   " - total ASVs:", nrow(FUN$countData), "\n",
@@ -243,7 +276,8 @@ FUN$taxData <- FUN$taxData[rownames(FUN$taxData) %in% keep,]
 FUN$countData <- FUN$countData[rownames(FUN$countData) %in% keep,]
 
 # Bacteria
-keep <-  filter_otus(BAC$countData, ASV_FILTER)
+# keep <-  filter_asvs(BAC$countData, ASV_FILTER)
+keep <- filter_asvs(BAC$countData)
 cat(
   "Bacteria:\n",
   " - total ASVs:", nrow(BAC$countData), "\n",
@@ -265,6 +299,21 @@ Copy number is calculated per mg of root sample from the qPCR data.
 
 ```{r qPCR abundance}
 
+abundance <- read.csv(here(DATA_DIR, "abundance.csv"))
+
+FUN$abundance <- subset(abundance, Target == "ITS")
+BAC$abundance <- subset(abundance, Target == "16S")
+
+rownames(FUN$abundance) <- FUN$abundance$Sample
+rownames(BAC$abundance) <- BAC$abundance$Sample
+
+# Add `copy_number` to colData from abundance data `TCN_mg`
+FUN$colData$copy_number <- FUN$abundance[rownames(FUN$colData), "TCN_mg"]
+BAC$colData$copy_number <- BAC$abundance[rownames(BAC$colData), "TCN_mg"]
+
+FUN$colData$log10_copy_number <- log10(FUN$colData$copy_number + 1)
+BAC$colData$log10_copy_number <- log10(BAC$colData$copy_number + 1)
+
 ```
 
 ## Create DESeq objects
@@ -272,17 +321,25 @@ Copy number is calculated per mg of root sample from the qPCR data.
 ```{r DESeq}
 
 # Make sure countData and colData still match, if they do, create DESeq objects
-# if(identical(colnames(FUN$countData), rownames(FUN$colData))) {
-#   # Create DESeq object
-#   FUN$dds <- ubiom_to_des(FUN)
-#   print("FUN DESeq object created")
-# } else {
-#   stop("FUN countData and colData do not match")
-# }
+if(identical(colnames(FUN$countData), rownames(FUN$colData))) {
+  # Create DESeq object
+  FUN$dds <- DESeqDataSetFromMatrix(
+    countData = FUN$countData,
+    colData = FUN$colData,
+    design = ~ 1
+  )
+  print("FUN DESeq object created")
+} else {
+  stop("FUN countData and colData do not match")
+}
 
 if(identical(colnames(BAC$countData), rownames(BAC$colData))) {
   # Create DESeq object
-  BAC$dds <- ubiom_to_des(BAC)
+  BAC$dds <- DESeqDataSetFromMatrix(
+    countData = BAC$countData,
+    colData = BAC$colData,
+    design = ~ 1
+  )
   print("BAC DESeq object created")
 } else {
   stop("BAC countData and colData do not match")
@@ -299,8 +356,8 @@ Values are centred around the mean of the copy number.
 ```{r normalisation}
 # Normalise count data using DESeq2 size factors
 
-# FUN$dds$sizeFactor <- FUN$dds$copy_number / mean(FUN$dds$copy_number)
-# BAC$dds$sizeFactor <- BAC$dds$copy_number / mean(BAC$dds$copy_number)
+FUN$dds$sizeFactor <- FUN$dds$copy_number / mean(FUN$dds$copy_number)
+BAC$dds$sizeFactor <- BAC$dds$copy_number / mean(BAC$dds$copy_number)
 ```
 
 ## ASV and sample summary
@@ -331,8 +388,8 @@ data.table(
     "Total reads", "Mean reads per sample", "Median reads per sample", 
     "Max reads per sample", "Min reads per sample"
   ),
-  # "Fungi (Raw)" = unlist(read_summary(FUN$dds, FALSE)),
-  # "Fungi (Normalized)" = unlist(read_summary(FUN$dds, TRUE)),
+  "Fungi (Raw)" = unlist(read_summary(FUN$dds, FALSE)),
+  "Fungi (Normalized)" = unlist(read_summary(FUN$dds, TRUE)),
   "Bacteria (Raw)" = unlist(read_summary(BAC$dds, FALSE)),
   "Bacteria (Normalized)" = unlist(read_summary(BAC$dds, TRUE))
 ) %>%
@@ -368,8 +425,8 @@ data.table(
     "Total ASVs", "Mean reads per ASV", "Median reads per ASV", 
     "Max reads per ASV", "Min reads per ASV"
   ),
-  # "Fungi (Raw)" = unlist(ASV_summary(FUN$dds, FALSE)),
-  # "Fungi (Normalized)" = unlist(ASV_summary(FUN$dds, TRUE)),
+  "Fungi (Raw)" = unlist(ASV_summary(FUN$dds, FALSE)),
+  "Fungi (Normalized)" = unlist(ASV_summary(FUN$dds, TRUE)),
   "Bacteria (Raw)" = unlist(ASV_summary(BAC$dds, FALSE)),
   "Bacteria (Normalized)" = round(unlist(ASV_summary(BAC$dds, TRUE)), 2)
 ) %>%
@@ -471,7 +528,97 @@ taxonomy_summary_reads(BAC$taxData, BAC$dds) %>%
 
 ## Community size
 
-```{r community size}
+```{r copy number plots}
+
+copy_number_combined <- rbind(
+  FUN$colData %>% mutate(type = "Fungi"),
+  BAC$colData %>% mutate(type = "Bacteria")
+)
+
+copy_number_timepoint <- ggboxplot(
+  filter(FUN$colData, experiment == 1), 
+  x = "timepoint", y = "log10_copy_number", 
+  fill = "weeks",
+  xlab = "Timepoint",
+  ylab = "log10 Copy number",
+  facet.by = c("source")
+)
+
+copy_number_experiment <- ggboxplot(
+  filter(FUN$colData, timepoint == 1), 
+  x = "experiment", y = "log10_copy_number", 
+  fill = "weeks",
+  xlab = "Experiment",
+  ylab = "log10 Copy number",
+  facet.by = c("source")
+)
+
+ggarrange(
+  copy_number_timepoint,
+  copy_number_experiment,
+  ncol = 1, nrow = 2,
+  common.legend = TRUE, legend = "bottom"
+)
+
+ggsave(filename = "FUN_copy_number_plots.png", path = FIGURES_DIR)
+
+copy_number_plots
+
+copy_number_timepoint <- ggboxplot(
+  filter(BAC$colData, experiment == 1), 
+  x = "timepoint", y = "log10_copy_number", 
+  fill = "weeks",
+  xlab = "Timepoint",
+  ylab = "log10 Copy number",
+  facet.by = c("source")
+)
+
+copy_number_experiment <- ggboxplot(
+  filter(BAC$colData, timepoint == 1), 
+  x = "experiment", y = "log10_copy_number", 
+  fill = "weeks",
+  xlab = "Experiment",
+  ylab = "log10 Copy number",
+  facet.by = c("source")
+)
+
+ggarrange(
+  copy_number_timepoint,
+  copy_number_experiment,
+  ncol = 1, nrow = 2,
+  common.legend = TRUE, legend = "bottom"
+)
+
+ggsave(filename = "BAC_copy_number_plots.png", path = FIGURES_DIR)
+
+```
+
+```{r copy number models}
+
+copy_number_models <- function(data, formula) {
+  types <- unique(data$type)
+  sources <- unique(data$source)
+  for (type in types) {
+    data_type <- filter(data, type == type)
+    for (src in sources) {
+      data_src <- filter(data_type, source == src)
+      cat("\n", type, ":", src, "\n", sep = "")
+      model <- lmer(update(formula, copy_number ~ .), data_src)
+      # check_model(model)
+      # print(model)
+      summary(model) |> print()
+      Anova(model, type = 3) |> print()
+    }
+  }
+}
+
+cat("\nTimepoint:\n")
+
+copy_number_models(filter(copy_number_combined, experiment == 1), T_DESIGN)
+
+cat("\nExperiment:\n")
+
+copy_number_models(filter(copy_number_combined, timepoint == 1), E_DESIGN)
 
 ```
 
@@ -598,5 +745,41 @@ alpha_anova(
 alpha_anova(
   bac_alpha, formula, metrics, nperm = 1000
 )
+
+```
+
+## Beta diversity
+
+### PCA
+
+```{r pca}
+
+n_pcs <- 10
+
+fun_pca <- des_to_pca(FUN$dds)
+# fun_pca <- t(data.frame(t(pca$x) * pca$percentVar))
+
+bac_pca <- des_to_pca(BAC$dds)
+# bac_pca <- t(data.frame(t(pca$x) * pca$percentVar))
+
+
+fun_pca_summary <- apply(
+  fun_pca$x[, 1:n_pcs], 2, 
+  function(x){
+    summary(aov(update(T_DESIGN, x ~ .), data = as.data.frame(cbind(x, colData(FUN$dds)))))
+  }
+)
+
+fun_pca_summary
+
+bac_pca_summary <- apply(
+  bac_pca$x[, 1:n_pcs], 2, 
+  function(x){
+    summary(aov(update(T_DESIGN, x ~ .), data = as.data.frame(cbind(x, colData(BAC$dds)))))
+  }
+)
+
+bac_pca_summary
+
 
 ```

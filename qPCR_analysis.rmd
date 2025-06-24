@@ -49,7 +49,7 @@ library(rmarkdown)
 
 ```{r variables}
 
-cq_threshold <- 0.5 # Threshold for difference between triplicate Cq values
+cq_threshold <- 0.7 # Threshold for difference between triplicate Cq values
 max_cq       <- 35 # Maximum Cq value to keep
 
 here         <- here::here() # Set working directory to location of this file
@@ -159,6 +159,8 @@ soil  <- list(11:20, 31:40, 51:60)
 # Use suppressWarnings to ignore warnings about missing values in Cq
 # This is expected for NTCs and some samples with no amplification
 plates <- suppressWarnings(lapply(plate_files, load_qpcr_data))
+
+plates$plate_3$samples[Target == "ITS", Sample] |> unique() |> sort()
 
 ```
 
@@ -706,7 +708,7 @@ combined_data[, z_score := (TCN - mean(TCN)) / sd(TCN), by = .(Sample, Target)]
 
 combined_data[, z_score := scale(TCN), by = .(Sample, Target)]
 
-combined_data[abs(z_score) > 1.5][order(Target, Sample)]
+# combined_data[abs(z_score) > 1.5][order(Target, Sample)]
 
 ggplot(combined_data, aes(x = Sample, y = log10(TCN))) +
   geom_boxplot() +
@@ -754,6 +756,8 @@ sample_mass <- fread(file.path(data_dir, "qPCR", "sample_mass.csv"))[, Sample :=
 summary <- merge(summary, sample_mass, by = "Sample")
 
 summary[, TCN_mg := mean_TCN / (mg * 2 / 100)]
+
+summary[, Sample := paste0("HM", Sample)]
 
 kbl(summary)
 
