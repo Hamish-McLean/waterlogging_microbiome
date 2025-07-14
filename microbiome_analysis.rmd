@@ -47,6 +47,7 @@ library(here)
 library(kableExtra)
 library(lme4)
 library(lmPerm)
+library(patchwork)
 library(performance)
 library(permutes)
 library(see)
@@ -502,7 +503,7 @@ print_read_summary(BAC_time, "Bacteria Timepoint Read Summary") |> kbl()
 
 ### ASV summary 
 
-```{r asv summary, include = FALSE}
+```{r asv summary, eval = FALSE}
 
 #' @title ASV summary
 #' @description Create a summary of the read counts per ASV
@@ -607,7 +608,7 @@ taxonomy_summary(BAC$taxData) %>%
 
 Proportion of reads which can be assigned to each taxonomic rank.
 
-```{r taxonomy reads}
+```{r taxonomy reads, eval = FALSE}
 
 taxonomy_summary_reads <- function(taxData, dds) {
   tx <-taxData[rownames(dds), ]
@@ -671,7 +672,7 @@ copy_number_experiment <- ggboxplot(
   facet.by = c("source")
 )
 
-ggarrange(
+copy_number_plots <- ggarrange(
   copy_number_timepoint,
   copy_number_experiment,
   ncol = 1, nrow = 2,
@@ -856,76 +857,103 @@ apply_to_subsets(
 
 ```{r alpha diversity plots}
 
-
-
-
-
-
-
-
-
-
-# Add a new column to colData that combines experiment and timepoint
-FUN$colData$exp_tp <- paste(FUN$colData$experiment, FUN$colData$timepoint, sep = "|")
-BAC$colData$exp_tp <- paste(BAC$colData$experiment, BAC$colData$timepoint, sep = "|")
+measures <- c("Shannon", "Simpson")
 
 # Root fungi
 
-plot_alpha(
-  FUN$countData, FUN$colData[FUN$colData$source == "root", ],
-  design = "exp_tp", colour = "weeks",
-  measures = c("S.chao1", "Shannon", "Simpson"),
+alpha_FUN_root_exp <- plot_alpha(
+  FUN_exp$root$countData, FUN_exp$root$colData,
+  design = "experiment", colour = "weeks",
+  measures = measures,
   type = "box"
-) + scale_colour_manual(values = cbPalette) + 
+) + scale_colour_manual(values = cbPalette) +
   # theme(axis.title.x = element_blank()) +
-  ggtitle("Root fungi α-diversity")
-
-ggsave(filename = "root_fungal_alpha.png", path = FIGURES_DIR)
+  ggtitle("Fungi: root")
+alpha_FUN_root_exp
+ggsave(filename = "alpha_FUN_root_exp.png", path = FIGURES_DIR)
 
 # Soil fungi
 
-plot_alpha(
-  FUN$countData, FUN$colData[FUN$colData$source == "soil", ],
-  design = "exp_tp", colour = "weeks",
-  measures = c("S.chao1", "Shannon", "Simpson"),
+alpha_FUN_soil_exp <- plot_alpha(
+  FUN_exp$soil$countData, FUN_exp$soil$colData,
+  design = "experiment", colour = "weeks",
+  measures = measures,
   type = "box"
-) + scale_colour_manual(values = cbPalette) + 
+) + scale_colour_manual(values = cbPalette) +
   # theme(axis.title.x = element_blank()) +
-  ggtitle("Soil fungi α-diversity")
-
-ggsave(filename = "soil_fungal_alpha.png", path = FIGURES_DIR)
+  ggtitle("Fungi: soil")
+alpha_FUN_soil_exp
+ggsave(filename = "alpha_FUN_soil_exp.png", path = FIGURES_DIR)
 
 # Root bacteria
 
-plot_alpha(
-  BAC$countData, BAC$colData[BAC$colData$source == "root", ],
-  design = "exp_tp", colour = "weeks",
-  measures = c("S.chao1", "Shannon", "Simpson"),
+alpha_BAC_root_exp <- plot_alpha(
+  BAC_exp$root$countData, BAC_exp$root$colData,
+  design = "experiment", colour = "weeks",
+  measures = measures,
   type = "box"
-) + scale_colour_manual(values = cbPalette) + 
+) + scale_colour_manual(values = cbPalette) +
   # theme(axis.title.x = element_blank()) +
-  ggtitle("Root bacteria α-diversity")
-
-ggsave(filename = "root_bacterial_alpha.png", path = FIGURES_DIR)
+  ggtitle("Bacteria: root")
+alpha_BAC_root_exp
+ggsave(filename = "alpha_BAC_root_exp.png", path = FIGURES_DIR)
 
 # Soil bacteria
 
-plot_alpha(
-  BAC$countData, BAC$colData[BAC$colData$source == "soil", ],
-  design = "exp_tp", colour = "weeks",
-  measures = c("S.chao1", "Shannon", "Simpson"),
+alpha_BAC_soil_exp <- plot_alpha(
+  BAC_exp$soil$countData, BAC_exp$soil$colData,
+  design = "experiment", colour = "weeks",
+  measures = measures,
   type = "box"
-) + scale_colour_manual(values = cbPalette) + 
+) + scale_colour_manual(values = cbPalette) +
   # theme(axis.title.x = element_blank()) +
-  ggtitle("Soil bacteria α-diversity")
+  ggtitle("Bacteria: root")
+alpha_BAC_root_exp
+ggsave(filename = "alpha_BAC_root_exp.png", path = FIGURES_DIR)
 
-ggsave(filename = "soil_bacterial_alpha.png", path = FIGURES_DIR)
+# Soil bacteria
+
+alpha_BAC_soil_exp <- plot_alpha(
+  BAC_exp$soil$countData, BAC_exp$soil$colData,
+  design = "experiment", colour = "weeks",
+  measures = measures,
+  type = "box"
+) + scale_colour_manual(values = cbPalette) +
+  # theme(axis.title.x = element_blank()) +
+  ggtitle("Bacteria: soil")
+alpha_BAC_soil_exp
+ggsave(filename = "alpha_BAC_soil_exp.png", path = FIGURES_DIR)
+
+# alpha_exp_combined <- ggarrange(
+#   list(
+#     alpha_FUN_root_exp, alpha_FUN_soil_exp,
+#     alpha_BAC_root_exp, alpha_BAC_soil_exp
+#   ),
+#   ncol = 2, nrow = 2,
+#   labels = c("Fungi Root", "Fungi Soil", "Bacteria Root", "Bacteria Soil"),
+#   common.legend = TRUE, legend = "bottom"
+# )
+
+alpha_exp_combined <- (
+  alpha_FUN_root_exp + alpha_FUN_soil_exp
+) / (
+  alpha_BAC_root_exp + alpha_BAC_soil_exp
+) +
+  plot_layout(guides = "collect") & # Collect legends into a single common legend
+  theme(legend.position = "bottom") # Position the common legend
+
+
+alpha_exp_combined
+ggsave(
+  filename = "alpha_exp_combined.png", plot = alpha_exp_combined, path = FIGURES_DIR
+  # width = 10, height = 10, units = "cm"
+)
 
 ```
 
 ### Permutation ANOVA on alpha diversity index ranks
 
-```{r alpha diversity anova}
+```{r alpha diversity anova, eval = FALSE}
 
 # Alpha diversity data
 
@@ -989,7 +1017,7 @@ alpha_anova(
 
 ### PCA
 
-```{r pca}
+```{r pca, eval = FALSE}
 
 n_pcs <- 10
 
@@ -1027,28 +1055,46 @@ bac_pca_summary
 
 ```{r adonis}
 
-# Calculate Bray-Curtis distance matrix
-vg <- vegdist(t(counts(BAC_time$soil$dds, normalize = T)), method = "bray")
-
 e_design <- vg ~ treatment * experiment
 
 t_design <- vg ~ treatment * timepoint
 
-set.seed(SEED)
-# result <- 
-adonis2(
-  t_design, 
-  colData(BAC_time$soil$dds),
-  # strata = colData(FUN_exp$root$dds)$experiment:colData(FUN_exp$root$dds)$block, # For repeat measures 
-  permutations = 1000
-)
-result
+adonis_analysis <- function(dds, design, nperm = 1000) {
+  set.seed(SEED)
+  vg <- vegdist(t(counts(dds, normalize = T)), method = "bray")
+  result <- adonis2(
+    update(design, vg ~ .),
+    colData(dds),
+    strata = colData(dds)$experiment:colData(dds)$block, # For repeat measures
+    permutations = nperm,
+    by = "terms"
+  )
+  return(result)
+}
 
-df <- result %>% data.frame()
-df$Perc.Var <- df$SumOfSqs / df["Total", "SumOfSqs"] * 100
-df %>%
-  kbl() %>%
-  kable_styling("striped", full_width = F)
+adonis_analysis(FUN_exp$root$dds, e_design) %>% print()
+
+
+## function to apply adonis analysis to each subset of data
+adonis_analysis_subset <- function(data, name, source, design) {
+  cat("\n", name, ":", source, "\n")
+  result <- adonis_analysis(data$dds, design)
+  print(result)
+  return(result)
+}
+
+# Apply adonis analysis to each subset of data
+apply_to_subsets(FUN_exp, "Fungi Experiment", adonis_analysis_subset, e_design)
+apply_to_subsets(BAC_exp, "Bacteria Experiment", adonis_analysis_subset, e_design)
+
+apply_to_subsets(FUN_time, "Fungi Timepoint", adonis_analysis_subset, t_design)
+apply_to_subsets(BAC_time, "Bacteria Timepoint", adonis_analysis_subset, t_design)
+
+# df <- result %>% data.frame()
+# df$Perc.Var <- df$SumOfSqs / df["Total", "SumOfSqs"] * 100
+# df %>%
+#   kbl() %>%
+#   kable_styling("striped", full_width = F)
 
 ```
 
