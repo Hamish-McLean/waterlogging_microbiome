@@ -14,10 +14,23 @@ params:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
-options(viewer = NULL)
-options(kableExtra_view_html = interactive())
+
 if (!exists("params")) params <- list(pipeline = "DADA2")
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# Kable options
+options(
+  browser = "false",
+  kableExtra.html.bsTable = TRUE,
+  kableExtra.bootstrap_options = c("striped", "hover", "condensed"),
+  kableExtra_view_html = interactive(),
+  knitr.table.format = "html",
+  viewer = NULL # Disable viewer to avoid opening in browser
+)
+
+Sys.setenv("BROWSER" = "false")
+
 ```
 
 ```{r libraries}
@@ -62,10 +75,11 @@ FIGURES_DIR <- here("figures")
 
 # Bioinformatics pipeline (defaults to DADA2)
 # This should be set in the YAML header or passed as a parameter
-PIPELINE <- params$pipeline # DADA2 or USEARCH
+PIPELINE    <- params$pipeline # DADA2 or USEARCH
 ASV_FILTER  <- 0.001 # ASV filter for removing low abundance ASVs
-READ_FILTER <- 0.05 # Read count filter for rarefaction
-TAX_CONF    <- 0.65 # Confidence threshold for taxonomic rank assignment
+READ_FILTER <- 0.05  # Read count filter for rarefaction
+TAX_CONF    <- 0.65  # Confidence threshold for taxonomic rank assignment
+SEED        <- 25647 # Random seed
 
 # Colour blind palette
 cbPalette <- c(
@@ -76,10 +90,10 @@ cbPalette <- c(
 # Model designs
 # Timepoint model for E1
 # formula_t <- y ~ treatment * timepoint + (1 | plot) + (1 | block)
-T_DESIGN <- y ~ treatment * timepoint + (1 | block)
+T_DESIGN <- ~ treatment * timepoint + (1 | block)
 
 # Experiment model without timepoint 2
-E_DESIGN <- y ~ treatment * experiment + (1 | block / experiment)
+E_DESIGN <- ~ treatment * experiment + (1 | experiment:block)
 
 ```
 
@@ -247,9 +261,11 @@ top_asvs <- data.table(
   "Bacteria" = lapply(proportions, function(x) asv_propotions(BAC$countData, x))
 )
 
-top_asvs %>%
-  kbl() %>%
-  kable_styling("striped", full_width = F)
+top_asvs |> kbl()
+
+# top_asvs %>%
+#   kbl() %>%
+#   kable_styling("striped", full_width = F)
 
 ```
 
@@ -316,48 +332,126 @@ BAC$colData$log10_copy_number <- log10(BAC$colData$copy_number + 1)
 
 ```
 
-## Create DESeq objects
+## Subset data
 
-```{r DESeq}
+For both fungi and bacteria:
+Subset by each question (experiment and timepoint).
+Subset by each source (root and soil).
 
-# Make sure countData and colData still match, if they do, create DESeq objects
-if(identical(colnames(FUN$countData), rownames(FUN$colData))) {
-  # Create DESeq object
-  FUN$dds <- DESeqDataSetFromMatrix(
-    countData = FUN$countData,
-    colData = FUN$colData,
-    design = ~ 1
+```{r subset data}
+
+FUN_exp <- list(
+  root = list(
+    countData = FUN$countData[, FUN$colData$source == "root" & FUN$colData$timepoint == 1],
+    colData = FUN$colData[FUN$colData$source == "root" & FUN$colData$timepoint == 1, ]
+  ),
+  soil = list(
+    countData = FUN$countData[, FUN$colData$source == "soil" & FUN$colData$timepoint == 1],
+    colData = FUN$colData[FUN$colData$source == "soil" & FUN$colData$timepoint == 1, ]
   )
-  print("FUN DESeq object created")
-} else {
-  stop("FUN countData and colData do not match")
-}
+)
 
-if(identical(colnames(BAC$countData), rownames(BAC$colData))) {
-  # Create DESeq object
-  BAC$dds <- DESeqDataSetFromMatrix(
-    countData = BAC$countData,
-    colData = BAC$colData,
-    design = ~ 1
+FUN_time <- list(
+  root = list(
+    countData = FUN$countData[, FUN$colData$source == "root" & FUN$colData$experiment == 1],
+    colData = FUN$colData[FUN$colData$source == "root" & FUN$colData$experiment == 1, ]
+  ),
+  soil = list(
+    countData = FUN$countData[, FUN$colData$source == "soil" & FUN$colData$experiment == 1],
+    colData = FUN$colData[FUN$colData$source == "soil" & FUN$colData$experiment == 1, ]
   )
-  print("BAC DESeq object created")
-} else {
-  stop("BAC countData and colData do not match")
+)
+
+BAC_exp <- list(
+  root = list(
+    countData = BAC$countData[, BAC$colData$source == "root" & BAC$colData$timepoint == 1],
+    colData = BAC$colData[BAC$colData$source == "root" & BAC$colData$timepoint == 1, ]
+  ),
+  soil = list(
+    countData = BAC$countData[, BAC$colData$source == "soil" & BAC$colData$timepoint == 1],
+    colData = BAC$colData[BAC$colData$source == "soil" & BAC$colData$timepoint == 1, ]
+  )
+)
+
+BAC_time <- list(
+  root = list(
+    countData = BAC$countData[, BAC$colData$source == "root" & BAC$colData$experiment == 1],
+    colData = BAC$colData[BAC$colData$source == "root" & BAC$colData$experiment == 1, ]
+  ),
+  soil = list(
+    countData = BAC$countData[, BAC$colData$source == "soil" & BAC$colData$experiment == 1],
+    colData = BAC$colData[BAC$colData$source == "soil" & BAC$colData$experiment == 1, ]
+  )
+)
+
+```
+
+```{r iterator}
+
+#' Generic iterator function
+#' @description Applies a function to each subset of data
+#' @param data_list A list of data subsets (e.g., FUN or BAC)
+#' @param data_name A string representing the name of the data (e.g, "Fungi" or "Bacteria")
+#' @param func A function to apply to each subset
+#' @param ... Additional arguments to pass to the function
+#' @return A list of results from applying the function to each subset
+#'
+apply_to_subsets <- function(data_list, data_name, func, ...) {
+  # Iterate over sources (root, soil)
+  result_list <- lapply(names(data_list), function(source_name) {
+    data <- data_list[[source_name]]
+
+    # Apply the provided function to the innermost list element and names
+    # Pass the subset data, data_name, source_name, and any extra args
+    result <- func(data, data_name, source_name, ...)
+
+    # Return the result (assuming func returns the modified list element or results)
+    return(result)
+  })
+  names(result_list) <- names(data_list) # Set names for the result list
+  return(result_list)
 }
 
 ```
 
-## Abundance normalisation
+## Create DESeq objects
 
-Absolute abundance normalisation using DESeq2 size factors.
+DESeq2 objects are created for each subset of data.
 
-Values are centred around the mean of the copy number.
+Absolute abundance normalisation using DESeq2 size factors calculated from qPCR-derived copy number.
 
-```{r normalisation}
-# Normalise count data using DESeq2 size factors
+Size factor values are centred around the mean of the copy number.
 
-FUN$dds$sizeFactor <- FUN$dds$copy_number / mean(FUN$dds$copy_number)
-BAC$dds$sizeFactor <- BAC$dds$copy_number / mean(BAC$dds$copy_number)
+```{r DESeq}
+
+create_dds_subset <- function(data, name, source, design = ~ 1) {
+  if(identical(colnames(data$countData), rownames(data$colData))) {
+
+    # Create DESeq object
+    dds <- DESeqDataSetFromMatrix(
+      countData = data$countData,
+      colData = data$colData,
+      design = design
+    )
+
+    # Set size factors based on copy number
+    sizeFactors(dds) <- data$colData$copy_number / mean(data$colData$copy_number)
+    # Add dds to data list
+    data$dds <- dds
+    return(data)
+
+    print(paste0(name, ": ", source, " DESeq object created"))
+  } else {
+    stop(paste0(name, ": ", source, " countData and colData do not match"))
+  }
+}
+
+FUN_exp <- apply_to_subsets(FUN_exp, "Fungi", create_dds_subset)
+FUN_time <- apply_to_subsets(FUN_time, "Fungi", create_dds_subset)
+
+BAC_exp <- apply_to_subsets(BAC_exp, "Bacteria", create_dds_subset)
+BAC_time <- apply_to_subsets(BAC_time, "Bacteria", create_dds_subset)
+
 ```
 
 ## ASV and sample summary
@@ -383,25 +477,32 @@ read_summary <- function(dds, norm = FALSE) {
   )
 }
 
-data.table(
-  "Metric" = c(
-    "Total reads", "Mean reads per sample", "Median reads per sample", 
-    "Max reads per sample", "Min reads per sample"
-  ),
-  "Fungi (Raw)" = unlist(read_summary(FUN$dds, FALSE)),
-  "Fungi (Normalized)" = unlist(read_summary(FUN$dds, TRUE)),
-  "Bacteria (Raw)" = unlist(read_summary(BAC$dds, FALSE)),
-  "Bacteria (Normalized)" = unlist(read_summary(BAC$dds, TRUE))
-) %>%
-  kbl() %>%
-  kable_styling("striped", full_width = F)
+print_read_summary <- function(data, title) {
+  cat("\n", title, "\n")
+  data.table(
+    "Metric" = c(
+      "Total reads", "Mean reads per sample", "Median reads per sample", 
+      "Max reads per sample", "Min reads per sample"
+    ),
+    "Root (Raw)" = unlist(read_summary(data$root$dds, FALSE)),
+    "Root (Normalized)" = unlist(read_summary(data$root$dds, TRUE)),
+    "Soil (Raw)" = unlist(read_summary(data$soil$dds, FALSE)),
+    "Soil (Normalized)" = unlist(read_summary(data$soil$dds, TRUE))
+  ) #%>%
+    # kbl() %>%
+    # kable_styling("striped", full_width = F)
+}
 
+print_read_summary(FUN_exp, "Fungi Experiment Read Summary") |> kbl()
+print_read_summary(FUN_time, "Fungi Timepoint Read Summary") |> kbl()
+print_read_summary(BAC_exp, "Bacteria Experiment Read Summary") |> kbl()
+print_read_summary(BAC_time, "Bacteria Timepoint Read Summary") |> kbl()
 
 ```
 
 ### ASV summary 
 
-```{r asv summary}
+```{r asv summary, include = FALSE}
 
 #' @title ASV summary
 #' @description Create a summary of the read counts per ASV
@@ -409,7 +510,7 @@ data.table(
 #' @param norm Logical, whether to normalise the counts
 #' @return A data.table with the total, mean, median, max and min reads per ASV
 #'
-ASV_summary <- function(dds, norm = FALSE) {
+asv_summary <- function(dds, norm = FALSE) {
   countData <- counts(dds, normalize = norm)
   data.table(
     "Total ASVs" = nrow(countData),
@@ -420,15 +521,32 @@ ASV_summary <- function(dds, norm = FALSE) {
   )
 }
 
+print_asv_summary <- function(data, title) {
+  cat("\n", title, "\n")
+  data.table(
+    "Metric" = c(
+      "Total ASVs", "Mean reads per ASV", "Median reads per ASV", 
+      "Max reads per ASV", "Min reads per ASV"
+    ),
+    "Root (Raw)" = unlist(asv_summary(data$root$dds, FALSE)),
+    "Root (Normalized)" = unlist(asv_summary(data$root$dds, TRUE)),
+    "Soil (Raw)" = unlist(asv_summary(data$soil$dds, FALSE)),
+    "Soil (Normalized)" = round(unlist(asv_summary(data$soil$dds, TRUE)), 2)
+  )
+}
+
+print_asv_summary(FUN_exp, "Fungi Experiment ASV Summary") |> kbl()
+
+
 data.table(
   "Metric" = c(
     "Total ASVs", "Mean reads per ASV", "Median reads per ASV", 
     "Max reads per ASV", "Min reads per ASV"
   ),
-  "Fungi (Raw)" = unlist(ASV_summary(FUN$dds, FALSE)),
-  "Fungi (Normalized)" = unlist(ASV_summary(FUN$dds, TRUE)),
-  "Bacteria (Raw)" = unlist(ASV_summary(BAC$dds, FALSE)),
-  "Bacteria (Normalized)" = round(unlist(ASV_summary(BAC$dds, TRUE)), 2)
+  "Fungi (Raw)" = unlist(asv_summary(FUN$dds, FALSE)),
+  "Fungi (Normalized)" = unlist(asv_summary(FUN$dds, TRUE)),
+  "Bacteria (Raw)" = unlist(asv_summary(BAC$dds, FALSE)),
+  "Bacteria (Normalized)" = round(unlist(asv_summary(BAC$dds, TRUE)), 2)
 ) %>%
   kbl() %>%
   kable_styling("striped", full_width = F)
@@ -595,38 +713,157 @@ ggsave(filename = "BAC_copy_number_plots.png", path = FIGURES_DIR)
 
 ```{r copy number models}
 
-copy_number_models <- function(data, formula) {
-  types <- unique(data$type)
-  sources <- unique(data$source)
-  for (type in types) {
-    data_type <- filter(data, type == type)
-    for (src in sources) {
-      data_src <- filter(data_type, source == src)
-      cat("\n", type, ":", src, "\n", sep = "")
-      model <- lmer(update(formula, copy_number ~ .), data_src)
-      # check_model(model)
-      # print(model)
-      summary(model) |> print()
-      Anova(model, type = 3) |> print()
-    }
-  }
+# copy_number_models <- function(data, title, formula) {
+#   cat("\n", title, "\n")
+#   types <- unique(data$type)
+#   sources <- unique(data$source)
+#   for (type in types) {
+#     data_type <- filter(data, type == type)
+#     for (src in sources) {
+#       data_src <- filter(data_type, source == src)
+#       cat("\n", type, ":", src, "\n", sep = "")
+#       model <- lmer(update(formula, copy_number ~ .), data_src)
+#       # check_model(model)
+#       # print(model)
+#       summary(model) |> print()
+#       Anova(model, type = 3) |> print()
+#     }
+#   }
+# }
+
+copy_number_model <- function(data, name, source, design) {
+  cat("\n", name, ":", source, "\n\n")
+  model <- lmer(update(design, copy_number ~ .), data$colData)
+  summary(model) |> print()
+  Anova(model, type = 3) |> print()
 }
 
-cat("\nTimepoint:\n")
+apply_to_subsets(FUN_exp, "Fungi Experiment", copy_number_model, E_DESIGN)
+apply_to_subsets(FUN_time, "Fungi Timepoint", copy_number_model, T_DESIGN)
 
-copy_number_models(filter(copy_number_combined, experiment == 1), T_DESIGN)
-
-cat("\nExperiment:\n")
-
-copy_number_models(filter(copy_number_combined, timepoint == 1), E_DESIGN)
+apply_to_subsets(BAC_exp, "Bacteria Experiment", copy_number_model, E_DESIGN)
+apply_to_subsets(BAC_time, "Bacteria Timepoint", copy_number_model, T_DESIGN)
 
 ```
 
 ## Alpha diversity
 
+```{r calculate alpha diversity}
+
+#' @title Calculate alpha diversity
+#' @description Calculate alpha diversity metrics for each subset of data
+#' @param data A list containing countData and colData
+#' @param name A string representing the name of the data (e.g., "Fungi" or "Bacteria")
+#' @param source A string representing the source of the data (e.g., "root" or "soil")
+#' @return A list with the alpha diversity data added
+#' 
+calculate_alpha_diversity <- function(data, name, source) {
+  alpha_dt <- plot_alpha(data$countData, data$colData, returnData = TRUE)
+  data$alphaData <- alpha_dt[as.data.table(data$colData, keep.rownames = "Samples"), on = "Samples"]
+  return(data)
+}
+
+FUN_exp <- apply_to_subsets(FUN_exp, "", calculate_alpha_diversity)
+FUN_time <- apply_to_subsets(FUN_time, "", calculate_alpha_diversity)
+BAC_exp <- apply_to_subsets(BAC_exp, "", calculate_alpha_diversity)
+BAC_time <- apply_to_subsets(BAC_time, "", calculate_alpha_diversity)
+
+```
+
+```{r alpha diversity analysis}
+
+#' @title Analyze alpha diversity
+#' @description Perform alpha diversity analysis on each subset of data
+#' @param data A list containing countData and colData
+#' @param name A string representing the name of the data (e.g., "Fungi" or "Bacteria")
+#' @param source A string representing the source of the data (e.g., "root" or "soil")
+#' @param metrics A vector of alpha diversity metrics to analyze
+#' @param formula A formula for the model to use in the analysis
+#' @return A list with the alpha diversity results
+#'
+analyse_alpha_diversity <- function(data, name, source, metrics, formula) {
+  cat(paste0("\nAnalyzing alpha diversity for ", name, ":", source, "\n"))
+
+  # Run alpha diversity analysis for each metric
+  anova_results <- list()
+  for (met in metrics) {
+    cat("  - Metric:", met, "\n")
+    # Ensure the metric column exists and is numeric before ranking
+    if (!met %in% names(data$alphaData)) {
+      warning("Metric '", met, "' not found in alpha data for ", name, ": ", source)
+      next
+    }
+    if (!is.numeric(data$alphaData[[met]])) {
+      warning("Metric '", met, "' is not numeric in alpha data for ", name, ": ", source, ". Skipping ANOVA.")
+      next
+    }
+    
+    # Create a temporary column for the ranked metric for the model
+    temp_dt <- copy(data$alphaData) # Work on a copy to avoid modifying original alpha_dt in place with 'metric' column
+    temp_dt[, model_metric := rank(get(met))]
+    # Update the formula to use the temporary 'model_metric'
+    model_formula <- update(formula, model_metric ~ .)
+    # Ensure all variables in the formula exist in the data
+    formula_vars <- all.vars(model_formula)
+    if (!all(formula_vars %in% names(temp_dt))) {
+      missing_vars <- setdiff(formula_vars, names(temp_dt))
+      warning("Missing variables in data for ", name, ":", source, ":", paste(missing_vars, collapse = ", "), ". Skipping ANOVA for metric ", met)
+      next
+    }
+    # Run the permutation model
+    res <- tryCatch({
+      perm.lmer(model_formula, temp_dt, type = "anova", nperm = 1000)
+    }, error = function(e) {
+      warning("Error running perm.lmer for ", name, ":", source, ", metric ", met, ": ", e$message)
+      NULL # Return NULL on error
+    })
+    if (!is.null(res)) {
+      print(res) # Print the ANOVA table
+      # print()
+      # anova_results[[met]] <- res$anova # Store the result
+    } else {
+      # anova_results[[met]] <- "Error" # Indicate error
+      warning("ANOVA for ", name, ":", source, ", metric ", met, " failed.")
+    }
+  }
+  # Return results (e.g., the alpha data and ANOVA results)
+  # return(data$alphaData) # Return the alpha data with metrics
+}
+
+# Define metrics
+metrics <- c("S.chao1", "shannon", "simpson")
+
+apply_to_subsets(
+  FUN_exp, "Fungi Experiment", analyse_alpha_diversity,
+  metrics = metrics, formula = E_DESIGN
+)
+apply_to_subsets(
+FUN_time, "Fungi Timepoint", analyse_alpha_diversity,
+  metrics = metrics, formula = T_DESIGN
+)
+apply_to_subsets(
+  BAC_exp, "Bacteria Experiment", analyse_alpha_diversity,
+  metrics = metrics, formula = E_DESIGN
+)
+apply_to_subsets(
+  BAC_time, "Bacteria Timepoint", analyse_alpha_diversity,
+  metrics = metrics, formula = T_DESIGN
+)
+
+```
+
 ### Alpha diversity plots
 
 ```{r alpha diversity plots}
+
+
+
+
+
+
+
+
+
 
 # Add a new column to colData that combines experiment and timepoint
 FUN$colData$exp_tp <- paste(FUN$colData$experiment, FUN$colData$timepoint, sep = "|")
@@ -780,6 +1017,98 @@ bac_pca_summary <- apply(
 )
 
 bac_pca_summary
+
+
+```
+
+### Bray-Curtis
+
+#### ADONIS
+
+```{r adonis}
+
+# Calculate Bray-Curtis distance matrix
+vg <- vegdist(t(counts(BAC_time$soil$dds, normalize = T)), method = "bray")
+
+e_design <- vg ~ treatment * experiment
+
+t_design <- vg ~ treatment * timepoint
+
+set.seed(SEED)
+# result <- 
+adonis2(
+  t_design, 
+  colData(BAC_time$soil$dds),
+  # strata = colData(FUN_exp$root$dds)$experiment:colData(FUN_exp$root$dds)$block, # For repeat measures 
+  permutations = 1000
+)
+result
+
+df <- result %>% data.frame()
+df$Perc.Var <- df$SumOfSqs / df["Total", "SumOfSqs"] * 100
+df %>%
+  kbl() %>%
+  kable_styling("striped", full_width = F)
+
+```
+
+#### NMDS
+
+```{r nmds}
+
+set.seed(SEED)
+
+#' @title NMDS plot
+#' @description Create a NMDS plot for a given DESeq2 object
+#' @param dds DESeq2 object
+#' @param shape A string representing factor to use for the shape aesthetic
+#' @param filename A string representing the filename to save the plot
+#' @return A ggplot object of the NMDS plot
+#'
+nmdsPlot <- function(dds, shape, filename) {
+  vg <- vegdist(t(counts(dds, normalize = T)), method = "bray")
+  ord <- metaMDS(vg, trace=0)
+
+  plot <- plotOrd(
+    scores(ord), 
+    colData(dds), 
+    design = "treatment", 
+    shape = shape, 
+    alpha = 0.75, cbPalette = T
+  )
+  ggsave(filename, path = FIGURES_DIR)
+  return(plot)
+}
+
+# Experiment
+
+nmds_exp_fun_root <- nmdsPlot(FUN_exp$root$dds, shape = "experiment", filename = "NMDS_FUN_root_exp.png")
+nmds_exp_fun_soil <- nmdsPlot(FUN_exp$soil$dds, shape = "experiment", filename = "NMDS_FUN_soil_exp.png")
+nmds_exp_bac_root <- nmdsPlot(BAC_exp$root$dds, shape = "experiment", filename = "NMDS_BAC_root_exp.png")
+nmds_exp_bac_soil <- nmdsPlot(BAC_exp$soil$dds, shape = "experiment", filename = "NMDS_BAC_soil_exp.png")
+
+nmds_exp_combined <- ggarrange(
+  c(nmds_exp_fun_root, nmds_exp_fun_soil, nmds_exp_bac_root, nmds_exp_bac_soil),
+  common.legend = TRUE,
+  labels = "auto"
+)
+nmds_exp_combined
+ggsave("NMDS_exp.png", plot = nmds_exp_combined, path = FIGURES_DIR)
+
+# Timepoint
+
+nmds_time_fun_root <- nmdsPlot(FUN_time$root$dds, shape = "timepoint", filename = "NMDS_FUN_root_time.png")
+nmds_time_fun_soil <- nmdsPlot(FUN_time$soil$dds, shape = "timepoint", filename = "NMDS_FUN_soil_time.png")
+nmds_time_bac_root <- nmdsPlot(BAC_time$root$dds, shape = "timepoint", filename = "NMDS_BAC_root_time.png")
+nmds_time_bac_soil <- nmdsPlot(BAC_time$soil$dds, shape = "timepoint", filename = "NMDS_BAC_soil_time.png")
+
+nmds_time_combined <- ggarrange(
+  c(nmds_time_fun_root, nmds_time_fun_soil, nmds_time_bac_root, nmds_time_bac_soil),
+  common.legend = TRUE,
+  labels = "auto"
+)
+nmds_time_combined
+ggsave("NMDS_time.png", plot = nmds_time_combined, path = FIGURES_DIR)
 
 
 ```
