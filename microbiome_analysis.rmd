@@ -1088,9 +1088,10 @@ nmds_exp_bac_root <- nmdsPlot(BAC_exp$root$dds, shape = "experiment", filename =
 nmds_exp_bac_soil <- nmdsPlot(BAC_exp$soil$dds, shape = "experiment", filename = "NMDS_BAC_soil_exp.png")
 
 nmds_exp_combined <- ggarrange(
-  c(nmds_exp_fun_root, nmds_exp_fun_soil, nmds_exp_bac_root, nmds_exp_bac_soil),
+  plotlist = list(nmds_exp_fun_root, nmds_exp_fun_soil, nmds_exp_bac_root, nmds_exp_bac_soil),
   common.legend = TRUE,
-  labels = "auto"
+  legend = "bottom",
+  labels = c("Fungi: roots", "Fungi: soil", "Bacteria: roots", "Bacteria: soil")
 )
 nmds_exp_combined
 ggsave("NMDS_exp.png", plot = nmds_exp_combined, path = FIGURES_DIR)
@@ -1103,9 +1104,10 @@ nmds_time_bac_root <- nmdsPlot(BAC_time$root$dds, shape = "timepoint", filename 
 nmds_time_bac_soil <- nmdsPlot(BAC_time$soil$dds, shape = "timepoint", filename = "NMDS_BAC_soil_time.png")
 
 nmds_time_combined <- ggarrange(
-  c(nmds_time_fun_root, nmds_time_fun_soil, nmds_time_bac_root, nmds_time_bac_soil),
+  plotlist = list(nmds_time_fun_root, nmds_time_fun_soil, nmds_time_bac_root, nmds_time_bac_soil),
   common.legend = TRUE,
-  labels = "auto"
+  legend = "bottom",
+  labels = c("Fungi: roots", "Fungi: soil", "Bacteria: roots", "Bacteria: soil")
 )
 nmds_time_combined
 ggsave("NMDS_time.png", plot = nmds_time_combined, path = FIGURES_DIR)
