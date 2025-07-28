@@ -47,6 +47,7 @@ library(here)
 library(kableExtra)
 library(lme4)
 library(lmPerm)
+library(partR2)
 library(patchwork)
 library(performance)
 library(permutes)
@@ -392,19 +393,23 @@ BAC_time <- list(
 #' Generic iterator function
 #' @description Applies a function to each subset of data
 #' @param data_list A list of data subsets (e.g., FUN or BAC)
-#' @param data_name A string representing the name of the data (e.g, "Fungi" or "Bacteria")
+#' @param name A string representing the name of the data (e.g, "Fungi" or "Bacteria")
 #' @param func A function to apply to each subset
 #' @param ... Additional arguments to pass to the function
 #' @return A list of results from applying the function to each subset
 #'
-apply_to_subsets <- function(data_list, data_name, func, ...) {
+apply_to_subsets <- function(data_list, func, name = NULL, ...) {
   # Iterate over sources (root, soil)
   result_list <- lapply(names(data_list), function(source_name) {
     data <- data_list[[source_name]]
 
     # Apply the provided function to the innermost list element and names
-    # Pass the subset data, data_name, source_name, and any extra args
-    result <- func(data, data_name, source_name, ...)
+    # Pass the subset data, name, source_name, and any extra args
+    if (!is.null(name)) {
+      result <- func(data, name, source_name, ...)
+    } else {
+      result <- func(data, ...)
+    }
 
     # Return the result (assuming func returns the modified list element or results)
     return(result)
@@ -447,11 +452,11 @@ create_dds_subset <- function(data, name, source, design = ~ 1) {
   }
 }
 
-FUN_exp <- apply_to_subsets(FUN_exp, "Fungi", create_dds_subset)
-FUN_time <- apply_to_subsets(FUN_time, "Fungi", create_dds_subset)
+FUN_exp <- apply_to_subsets(FUN_exp, create_dds_subset, "Fungi")
+FUN_time <- apply_to_subsets(FUN_time, create_dds_subset, "Fungi")
 
-BAC_exp <- apply_to_subsets(BAC_exp, "Bacteria", create_dds_subset)
-BAC_time <- apply_to_subsets(BAC_time, "Bacteria", create_dds_subset)
+BAC_exp <- apply_to_subsets(BAC_exp, create_dds_subset, "Bacteria")
+BAC_time <- apply_to_subsets(BAC_time, create_dds_subset, "Bacteria")
 
 ```
 
@@ -1015,47 +1020,15 @@ alpha_anova(
 
 ## Beta diversity
 
-### PCA
-
-```{r pca, eval = FALSE}
-
-n_pcs <- 10
-
-fun_pca <- des_to_pca(FUN$dds)
-# fun_pca <- t(data.frame(t(pca$x) * pca$percentVar))
-
-bac_pca <- des_to_pca(BAC$dds)
-# bac_pca <- t(data.frame(t(pca$x) * pca$percentVar))
-
-
-fun_pca_summary <- apply(
-  fun_pca$x[, 1:n_pcs], 2, 
-  function(x){
-    summary(aov(update(T_DESIGN, x ~ .), data = as.data.frame(cbind(x, colData(FUN$dds)))))
-  }
-)
-
-fun_pca_summary
-
-bac_pca_summary <- apply(
-  bac_pca$x[, 1:n_pcs], 2, 
-  function(x){
-    summary(aov(update(T_DESIGN, x ~ .), data = as.data.frame(cbind(x, colData(BAC$dds)))))
-  }
-)
-
-bac_pca_summary
-
-
-```
-
 ### Bray-Curtis
 
 #### ADONIS
 
+Block included as a main effect in the design formula.
+
 ```{r adonis}
 
-e_design <- vg ~ treatment * experiment
+e_design <- vg ~ treatment * experiment + experiment:block
 
 t_design <- vg ~ treatment * timepoint
 
@@ -1065,21 +1038,21 @@ adonis_analysis <- function(dds, design, nperm = 1000) {
   result <- adonis2(
     update(design, vg ~ .),
     colData(dds),
-    strata = colData(dds)$experiment:colData(dds)$block, # For repeat measures
+    # strata = colData(dds)$experiment:colData(dds)$block, # For repeat measures
     permutations = nperm,
     by = "terms"
   )
   return(result)
 }
 
-adonis_analysis(FUN_exp$root$dds, e_design) %>% print()
+# adonis_analysis(BAC_exp$root$dds, e_design) %>% print()
 
 
 ## function to apply adonis analysis to each subset of data
 adonis_analysis_subset <- function(data, name, source, design) {
   cat("\n", name, ":", source, "\n")
   result <- adonis_analysis(data$dds, design)
-  print(result)
+  # print(result)
   return(result)
 }
 
@@ -1095,6 +1068,7 @@ apply_to_subsets(BAC_time, "Bacteria Timepoint", adonis_analysis_subset, t_desig
 # df %>%
 #   kbl() %>%
 #   kable_styling("striped", full_width = F)
+
 
 ```
 
@@ -1157,6 +1131,165 @@ nmds_time_combined <- ggarrange(
 )
 nmds_time_combined
 ggsave("NMDS_time.png", plot = nmds_time_combined, path = FIGURES_DIR)
+
+
+```
+
+### PCA
+
+```{r pca, eval = FALSE}
+
+n_pcs <- 10
+
+# fun_pca <- des_to_pca(FUN$dds)
+# # fun_pca <- t(data.frame(t(pca$x) * pca$percentVar))
+
+# bac_pca <- des_to_pca(BAC$dds)
+# # bac_pca <- t(data.frame(t(pca$x) * pca$percentVar))
+
+# Apply PCA to subsets
+pca_subset <- function(data, name, source) {
+  # Calculate PCA scores
+  pca <- des_to_pca(data$dds)
+
+  # Print PCA percent variance table
+  pca_var <- data.frame(
+    PC = paste0("PC", 1:n_pcs),
+    perc_var = round(pca$percentVar[1:n_pcs] * 100, 1)
+  )
+  cat("\n", name, ":", source, "\n\n")
+  print(pca_var)
+
+  # Adjust PCA scores with total variance
+  data$pca <- pca #t(data.frame(t(pca$x) * pca$percentVar))
+  return(data)
+}
+
+FUN_exp  <- apply_to_subsets(FUN_exp,  pca_subset, "Fungi experiment")
+BAC_exp  <- apply_to_subsets(BAC_exp,  pca_subset, "Bacteria experiment")
+FUN_time <- apply_to_subsets(FUN_time, pca_subset, "Fungi timepoint")
+BAC_time <- apply_to_subsets(BAC_time, pca_subset, "Bacteria timepoint")
+
+
+
+# Summarise PCA
+pca_summary_subset <- function(data, design, n_pcs = 10) {
+  pcs      <- 1:n_pcs
+  pca_data <- as.data.frame(data$pca$x[, pcs])
+  pc_names <- colnames(pca_data)
+  variance <- data$pca$percentVar[pcs]
+
+  results <- lapply(seq_along(pcs), function(i) {
+    pc_name  <- pc_names[i]
+    df       <- cbind(PC = pca_data[[pc_name]], data$colData)
+    model    <- lm(update(design, PC ~ .), df)
+    anova    <- Anova(model, type = 3)
+    anova_df <- anova |> data.frame()
+    total_ss <- sum(anova_df$Sum.Sq)
+    data.table(
+      pc      = pc_name,
+      factor  = rownames(anova_df),
+      SS      = anova_df$Sum.Sq,
+      df      = anova_df$Df,
+      F       = anova_df$F.value,
+      P       = anova_df$Pr..F.,
+      var     = anova_df$Sum.Sq / total_ss * 100,
+      var_adj = (anova_df$Sum.Sq / total_ss * 100) * variance[i]
+    )
+  })
+
+  bind_rows(results)[P <= 0.05 & factor != "(Intercept)"]
+}
+
+
+e_design <- ~ treatment * experiment + experiment:block
+
+apply_to_subsets(FUN_exp, pca_summary_subset, name = NULL, e_design)
+apply_to_subsets(BAC_exp, pca_summary_subset, name = NULL, e_design)
+
+
+```
+
+#### PC loadings
+
+PCs of interest:
+
+Experiment
+Fungi root: PC8, PC9
+Fungi soil: PC6
+Bacteria root: PC7
+Bacteria soil: PC4, PC8
+
+```{r pc loadings}
+
+# PC loadings
+pc_loadings <- function(data, pc, taxData, top_n = 10) {
+  df <- cbind(PC = data$pca$x[, pc], data$colData)
+  aggregate(PC ~ treatment, df, mean) |> print()
+
+  loadings <- data$pca$rotation[, pc]
+  top_asvs <- names(sort(abs(loadings), decreasing = TRUE))[1:top_n]
+  data.table(
+    PC = pc,
+    ASVs = top_asvs,
+    loading = loadings[top_asvs],
+    taxa = taxData[top_asvs, ]$rank
+  )
+}
+
+# Fungi root PC8
+pc_loadings(FUN_exp$root, 8, FUN$taxData, 10)
+
+# Fungi root PC8
+pc_loadings(FUN_exp$root, 8, FUN$taxData, 10)
+
+# Fungi soil PC6
+pc_loadings(FUN_exp$soil, 6, FUN$taxData, 10)
+
+
+# Bacteria root PC7
+pc_loadings(BAC_exp$root, 7, BAC$taxData, 10)
+
+# Bacteria soil PC4
+pc_loadings(BAC_exp$soil, 4, BAC$taxData, 10)
+
+# Bacteria soil PC8
+pc_loadings(BAC_exp$soil, 8, BAC$taxData, 10)
+
+```
+
+Note: Multiply absolute loading by proportion of variance in PC explained by treatment
+can then multiply this by proportion of variance of PC to the total community
+
+
+### Differential abundance
+
+```{r differential abundance}
+
+e_design <- ~ treatment * experiment + experiment:block
+
+# DESeq differential abundance analysis
+differential_abundance <- function(dds, design, taxData) {
+  design(dds) <- design
+  dds <- DESeq(dds)
+  res <- results(dds, contrast = c("treatment", "1", "0"))
+  sig_asvs <- res[res$padj < 0.05 & !is.na(res$padj), ]
+  data.table(
+    ASV = rownames(sig_asvs),
+    log2FoldChange = sig_asvs$log2FoldChange,
+    padj = sig_asvs$padj,
+    taxa = taxData[rownames(sig_asvs), ]$rank
+  )
+}
+
+differential_abundance(FUN_exp$soil$dds, e_design, FUN$taxData)
+differential_abundance(FUN_exp$root$dds, e_design, FUN$taxData)
+
+differential_abundance(BAC_exp$soil$dds, e_design, BAC$taxData)
+differential_abundance(BAC_exp$root$dds, e_design, BAC$taxData)
+
+
+
 
 
 ```
