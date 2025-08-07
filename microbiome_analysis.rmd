@@ -17,7 +17,7 @@ params:
 
 if (!exists("params")) params <- list(pipeline = "DADA2")
 
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = TRUE)
 
 # Kable options
 options(
@@ -92,7 +92,7 @@ cbPalette <- c(
 # Model designs
 # Timepoint model for E1
 # formula_t <- y ~ treatment * timepoint + (1 | plot) + (1 | block)
-T_DESIGN <- ~ treatment * timepoint + (1 | block)
+T_DESIGN <- ~ treatment * timepoint + (1 | plot)
 
 # Experiment model without timepoint 2
 E_DESIGN <- ~ treatment * experiment + (1 | experiment:block)
@@ -420,6 +420,22 @@ apply_to_subsets <- function(data_list, func, name = NULL, ...) {
 
 ```
 
+```{r add taxData}
+
+# Add taxData
+add_taxData <- function(data, taxData) {
+  data$taxData <- taxData
+  data
+}
+
+FUN_exp <- apply_to_subsets(FUN_exp, add_taxData, taxData = FUN$taxData)
+BAC_exp <- apply_to_subsets(BAC_exp, add_taxData, taxData = BAC$taxData)
+
+FUN_time <- apply_to_subsets(FUN_time, add_taxData, taxData = FUN$taxData)
+BAC_time <- apply_to_subsets(BAC_time, add_taxData, taxData = BAC$taxData)
+
+```
+
 ## Create DESeq objects
 
 DESeq2 objects are created for each subset of data.
@@ -719,36 +735,18 @@ ggsave(filename = "BAC_copy_number_plots.png", path = FIGURES_DIR)
 
 ```{r copy number models}
 
-# copy_number_models <- function(data, title, formula) {
-#   cat("\n", title, "\n")
-#   types <- unique(data$type)
-#   sources <- unique(data$source)
-#   for (type in types) {
-#     data_type <- filter(data, type == type)
-#     for (src in sources) {
-#       data_src <- filter(data_type, source == src)
-#       cat("\n", type, ":", src, "\n", sep = "")
-#       model <- lmer(update(formula, copy_number ~ .), data_src)
-#       # check_model(model)
-#       # print(model)
-#       summary(model) |> print()
-#       Anova(model, type = 3) |> print()
-#     }
-#   }
-# }
-
 copy_number_model <- function(data, name, source, design) {
   cat("\n", name, ":", source, "\n\n")
   model <- lmer(update(design, copy_number ~ .), data$colData)
-  summary(model) |> print()
-  Anova(model, type = 3) |> print()
+  # summary(model) |> print()
+  Anova(model, type = 3)
 }
 
-apply_to_subsets(FUN_exp, "Fungi Experiment", copy_number_model, E_DESIGN)
-apply_to_subsets(FUN_time, "Fungi Timepoint", copy_number_model, T_DESIGN)
+apply_to_subsets(FUN_exp, copy_number_model, "Fungi Experiment", E_DESIGN)
+apply_to_subsets(FUN_time, copy_number_model, "Fungi Timepoint", T_DESIGN)
 
-apply_to_subsets(BAC_exp, "Bacteria Experiment", copy_number_model, E_DESIGN)
-apply_to_subsets(BAC_time, "Bacteria Timepoint", copy_number_model, T_DESIGN)
+apply_to_subsets(BAC_exp, copy_number_model, "Bacteria Experiment", E_DESIGN)
+apply_to_subsets(BAC_time, copy_number_model, "Bacteria Timepoint", T_DESIGN)
 
 ```
 
@@ -759,24 +757,22 @@ apply_to_subsets(BAC_time, "Bacteria Timepoint", copy_number_model, T_DESIGN)
 #' @title Calculate alpha diversity
 #' @description Calculate alpha diversity metrics for each subset of data
 #' @param data A list containing countData and colData
-#' @param name A string representing the name of the data (e.g., "Fungi" or "Bacteria")
-#' @param source A string representing the source of the data (e.g., "root" or "soil")
 #' @return A list with the alpha diversity data added
 #' 
-calculate_alpha_diversity <- function(data, name, source) {
+calculate_alpha_diversity <- function(data) {
   alpha_dt <- plot_alpha(data$countData, data$colData, returnData = TRUE)
   data$alphaData <- alpha_dt[as.data.table(data$colData, keep.rownames = "Samples"), on = "Samples"]
   return(data)
 }
 
-FUN_exp <- apply_to_subsets(FUN_exp, "", calculate_alpha_diversity)
-FUN_time <- apply_to_subsets(FUN_time, "", calculate_alpha_diversity)
-BAC_exp <- apply_to_subsets(BAC_exp, "", calculate_alpha_diversity)
-BAC_time <- apply_to_subsets(BAC_time, "", calculate_alpha_diversity)
+FUN_exp <- apply_to_subsets(FUN_exp, calculate_alpha_diversity)
+FUN_time <- apply_to_subsets(FUN_time, calculate_alpha_diversity)
+BAC_exp <- apply_to_subsets(BAC_exp, calculate_alpha_diversity)
+BAC_time <- apply_to_subsets(BAC_time, calculate_alpha_diversity)
 
 ```
 
-```{r alpha diversity analysis}
+```{r alpha diversity analysis, eval = FALSE}
 
 #' @title Analyze alpha diversity
 #' @description Perform alpha diversity analysis on each subset of data
@@ -839,22 +835,11 @@ analyse_alpha_diversity <- function(data, name, source, metrics, formula) {
 # Define metrics
 metrics <- c("S.chao1", "shannon", "simpson")
 
-apply_to_subsets(
-  FUN_exp, "Fungi Experiment", analyse_alpha_diversity,
-  metrics = metrics, formula = E_DESIGN
-)
-apply_to_subsets(
-FUN_time, "Fungi Timepoint", analyse_alpha_diversity,
-  metrics = metrics, formula = T_DESIGN
-)
-apply_to_subsets(
-  BAC_exp, "Bacteria Experiment", analyse_alpha_diversity,
-  metrics = metrics, formula = E_DESIGN
-)
-apply_to_subsets(
-  BAC_time, "Bacteria Timepoint", analyse_alpha_diversity,
-  metrics = metrics, formula = T_DESIGN
-)
+apply_to_subsets(FUN_exp, analyse_alpha_diversity, "Fungi Experiment", metrics, E_DESIGN)
+apply_to_subsets(FUN_time, analyse_alpha_diversity, "Fungi Timepoint", metrics, T_DESIGN)
+
+apply_to_subsets(BAC_exp, analyse_alpha_diversity, "Bacteria Experiment", metrics, E_DESIGN)
+apply_to_subsets(BAC_time, analyse_alpha_diversity, "Bacteria Timepoint", metrics, T_DESIGN)
 
 ```
 
@@ -1032,36 +1017,27 @@ e_design <- vg ~ treatment * experiment + experiment:block
 
 t_design <- vg ~ treatment * timepoint
 
-adonis_analysis <- function(dds, design, nperm = 1000) {
+adonis_analysis <- function(data, name, source, design, strata = NULL, nperm = 1000) {
+  cat("\n", name, ":", source, "\n")
   set.seed(SEED)
-  vg <- vegdist(t(counts(dds, normalize = T)), method = "bray")
-  result <- adonis2(
+  vg <- vegdist(t(counts(data$dds, normalize = T)), method = "bray")
+  adonis2(
     update(design, vg ~ .),
-    colData(dds),
+    data$colData,
+    strata = if (!is.null(strata)) data$colData[[strata]] else NULL,
     # strata = colData(dds)$experiment:colData(dds)$block, # For repeat measures
     permutations = nperm,
     by = "terms"
   )
-  return(result)
 }
 
-# adonis_analysis(BAC_exp$root$dds, e_design) %>% print()
-
-
-## function to apply adonis analysis to each subset of data
-adonis_analysis_subset <- function(data, name, source, design) {
-  cat("\n", name, ":", source, "\n")
-  result <- adonis_analysis(data$dds, design)
-  # print(result)
-  return(result)
-}
 
 # Apply adonis analysis to each subset of data
-apply_to_subsets(FUN_exp, "Fungi Experiment", adonis_analysis_subset, e_design)
-apply_to_subsets(BAC_exp, "Bacteria Experiment", adonis_analysis_subset, e_design)
+apply_to_subsets(FUN_exp, adonis_analysis, "Fungi Experiment", e_design)
+apply_to_subsets(BAC_exp, adonis_analysis, "Bacteria Experiment", e_design)
 
-apply_to_subsets(FUN_time, "Fungi Timepoint", adonis_analysis_subset, t_design)
-apply_to_subsets(BAC_time, "Bacteria Timepoint", adonis_analysis_subset, t_design)
+apply_to_subsets(FUN_time, adonis_analysis, "Fungi Timepoint", t_design, "plot")
+apply_to_subsets(BAC_time, adonis_analysis, "Bacteria Timepoint", t_design, "plot")
 
 # df <- result %>% data.frame()
 # df$Perc.Var <- df$SumOfSqs / df["Total", "SumOfSqs"] * 100
@@ -1207,6 +1183,58 @@ e_design <- ~ treatment * experiment + experiment:block
 apply_to_subsets(FUN_exp, pca_summary_subset, name = NULL, e_design)
 apply_to_subsets(BAC_exp, pca_summary_subset, name = NULL, e_design)
 
+t_design <- ~ treatment * timepoint
+
+apply_to_subsets(FUN_time, pca_summary_subset, name = NULL, t_design)
+apply_to_subsets(BAC_time, pca_summary_subset, name = NULL, t_design)
+
+
+# Summarise PCA lmer
+pca_summary_subset_lmer <- function(data, design, n_pcs = 10) {
+  pcs      <- 1:n_pcs
+  pca_data <- as.data.frame(data$pca$x[, pcs])
+  pc_names <- colnames(pca_data)
+  variance <- data$pca$percentVar[pcs]
+
+  results <- lapply(seq_along(pcs), function(i) {
+    pc_name  <- pc_names[i]
+    df       <- cbind(PC = pca_data[[pc_name]], data$colData)
+    message  <- NULL
+    model    <- withCallingHandlers(
+      lmer(update(design, PC ~ .), df),
+      message = function(m) {
+        msg <- conditionMessage(m)
+        message <<- sub(":.*", "", msg)
+        invokeRestart("muffleMessage")
+      }
+    )
+    anova    <- Anova(model, type = 3) |> data.frame()
+    # r2       <- r2_nakagawa(model)
+    # part_r2 <- partR2(model, partvars = c("treatment", "timepoint", "treatment:timepoint"))
+    # print(part_r2)
+    data.table(
+      pc      = pc_name,
+      factor  = rownames(anova),
+      Chisq   = anova$Chisq,
+      df      = anova$Df,
+      P       = anova$Pr..Chisq.,
+      # R2_marg = r2$marginal,
+      # R2_cond = r2$conditional,
+      # R2_part = part_r2$R2,
+      message = message
+    )
+  })
+
+  bind_rows(results)[P <= 0.05 & factor != "(Intercept)"]
+}
+
+
+apply_to_subsets(FUN_exp, pca_summary_subset_lmer, name = NULL, E_DESIGN)
+apply_to_subsets(BAC_exp, pca_summary_subset_lmer, name = NULL, E_DESIGN)
+
+apply_to_subsets(FUN_time, pca_summary_subset_lmer, name = NULL, T_DESIGN)
+apply_to_subsets(BAC_time, pca_summary_subset_lmer, name = NULL, T_DESIGN)
+
 
 ```
 
@@ -1266,30 +1294,67 @@ can then multiply this by proportion of variance of PC to the total community
 
 ```{r differential abundance}
 
-e_design <- ~ treatment * experiment + experiment:block
-
-# DESeq differential abundance analysis
-differential_abundance <- function(dds, design, taxData) {
-  design(dds) <- design
-  dds <- DESeq(dds)
-  res <- results(dds, contrast = c("treatment", "1", "0"))
-  sig_asvs <- res[res$padj < 0.05 & !is.na(res$padj), ]
-  data.table(
-    ASV = rownames(sig_asvs),
-    log2FoldChange = sig_asvs$log2FoldChange,
-    padj = sig_asvs$padj,
-    taxa = taxData[rownames(sig_asvs), ]$rank
-  )
+# Run DESeq model
+deseq_model <- function(data, design) {
+  design(data$dds) <- design
+  data$dds <- DESeq(data$dds)
+  data
 }
 
-differential_abundance(FUN_exp$soil$dds, e_design, FUN$taxData)
-differential_abundance(FUN_exp$root$dds, e_design, FUN$taxData)
+e_design <- ~ treatment * experiment + experiment:block
 
-differential_abundance(BAC_exp$soil$dds, e_design, BAC$taxData)
-differential_abundance(BAC_exp$root$dds, e_design, BAC$taxData)
-
+FUN_exp <- apply_to_subsets(FUN_exp, deseq_model, name = NULL, e_design)
+BAC_exp <- apply_to_subsets(BAC_exp, deseq_model, name = NULL, e_design)
 
 
+# DESeq differential abundance analysis
+diff_abundance <- function(data) {
+  # Extract results for E1 (reference), E2, and interaction
+  res_e1  <- results(data$dds, name = "treatment_1_vs_0")
+  res_e2  <- results(data$dds, contrast = list(c("treatment_1_vs_0", "treatment1.experiment2")))
+  res_int <- results(data$dds, name = "treatment1.experiment2")
+
+  # Helper function for significance stars
+  p_stars <- function(p) {
+    ifelse(is.na(p), "",
+      ifelse(p < 0.001, "***",
+        ifelse(p < 0.01, "**",
+          ifelse(p < 0.05, "*", "")
+        )
+      )
+    )
+  }
+
+  # Combine into a data.table
+  dt <- data.table(
+    ASV = rownames(res_e1),
+    log2FC_E1 = res_e1$log2FoldChange,
+    padj_E1 = res_e1$padj,
+    sig_E1 = p_stars(res_e1$padj),
+    log2FC_E2 = res_e2$log2FoldChange,
+    padj_E2 = res_e2$padj,
+    sig_E2 = p_stars(res_e2$padj),
+    log2FC_inter = res_int$log2FoldChange,
+    padj_inter = res_int$padj,
+    sig_inter = p_stars(res_int$padj),
+    taxa = data$taxData[rownames(res_e1), ]$rank
+  )
+  
+  # Filter for any significant result
+  dt_filt <- dt[
+    (padj_E1 < 0.05 | padj_E2 < 0.05 | padj_inter < 0.05) & 
+    !is.na(padj_E1) & !is.na(padj_E2) & !is.na(padj_inter)
+  ]
+
+  # Optionally, sort by the smallest padj
+  dt_filt <- dt_filt[order(pmin(log2FC_E1, log2FC_E2, na.rm = TRUE), decreasing = TRUE)]
+  
+  return(dt_filt)
+}
+
+
+apply_to_subsets(FUN_exp, diff_abundance)
+apply_to_subsets(BAC_exp, diff_abundance)
 
 
 ```
