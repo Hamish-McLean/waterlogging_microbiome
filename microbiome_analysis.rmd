@@ -109,10 +109,41 @@ Load data from R objects.
 
 FUN      <- readRDS(here(OBJECT_DIR, "FUN.rds"))
 BAC      <- readRDS(here(OBJECT_DIR, "BAC.rds"))
-FUN_exp  <- readRDS(here(OBJECT_DIR, "FUN_exp.rds"))
-BAC_exp  <- readRDS(here(OBJECT_DIR, "BAC_exp.rds"))
-FUN_time <- readRDS(here(OBJECT_DIR, "FUN_time.rds"))
-BAC_time <- readRDS(here(OBJECT_DIR, "BAC_time.rds"))
+
+# FUN_exp  <- readRDS(here(OBJECT_DIR, "FUN_exp.rds"))
+# BAC_exp  <- readRDS(here(OBJECT_DIR, "BAC_exp.rds"))
+# FUN_time <- readRDS(here(OBJECT_DIR, "FUN_time.rds"))
+# BAC_time <- readRDS(here(OBJECT_DIR, "BAC_time.rds"))
+
+EXP  <- readRDS(here(OBJECT_DIR, "EXP.rds"))
+TIME <- readRDS(here(OBJECT_DIR, "TIME.rds"))
+
+# datasets <- list(
+#   list(
+#     data = FUN_exp,
+#     kingdom = "Fungi",
+#     experiment = "experiment",
+#     design = E_DESIGN
+#   ),
+#   list(
+#     data = FUN_time,
+#     kingdom = "Fungi",
+#     experiment = "timepoint",
+#     design = T_DESIGN
+#   ),
+#   list(
+#     data = BAC_exp,
+#     kingdom = "Bacteria",
+#     experiment = "experiment",
+#     design = E_DESIGN
+#   ),
+#   list(
+#     data = BAC_time,
+#     kingdom = "Bacteria",
+#     experiment = "timepoint",
+#     design = T_DESIGN
+#   )
+# )
 
 ```
 
@@ -189,18 +220,37 @@ Copy number models
 
 ```{r copy number models}
 
-copy_number_model <- function(data, name, source, design) {
-  cat("\n", name, ":", source, "\n\n")
-  model <- lmer(update(design, copy_number ~ .), data$colData)
-  # summary(model) |> print()
-  Anova(model, type = 3)
+copy_number_model <- function(data, kingdom, source, design) {
+  message <- ""
+  model <- withCallingHandlers(
+    lmer(update(design, copy_number ~ .), data$colData),
+    message = function(m) {
+      message <<- sub(":.*", "", conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  results <- Anova(model, type = 3) |> data.frame()
+  data.table(
+    kingdom = kingdom,
+    source  = source,
+    factor  = rownames(results),
+    df      = results$Df,
+    Chisq   = results$Chisq,
+    P       = results$Pr..Chisq.,
+    stars   = p_stars(results$Pr..Chisq.),
+    message = message
+  )
 }
 
-apply_to_subsets(FUN_exp, copy_number_model, "Fungi Experiment", E_DESIGN)
-apply_to_subsets(FUN_time, copy_number_model, "Fungi Timepoint", T_DESIGN)
+exp_cn <- apply_to_subsets(EXP, copy_number_model, E_DESIGN) |> 
+  unlist(recursive = FALSE) |> rbindlist()
 
-apply_to_subsets(BAC_exp, copy_number_model, "Bacteria Experiment", E_DESIGN)
-apply_to_subsets(BAC_time, copy_number_model, "Bacteria Timepoint", T_DESIGN)
+time_cn <- apply_to_subsets(TIME, copy_number_model, T_DESIGN) |> 
+  unlist(recursive = FALSE) |> rbindlist()
+
+exp_cn[P <= 0.05 & factor != "(Intercept)"]
+
+time_cn[P <= 0.05 & factor != "(Intercept)"]
 
 ```
 
@@ -213,16 +263,19 @@ apply_to_subsets(BAC_time, copy_number_model, "Bacteria Timepoint", T_DESIGN)
 #' @param data A list containing countData and colData
 #' @return A list with the alpha diversity data added
 #' 
-calculate_alpha_diversity <- function(data) {
+calculate_alpha_diversity <- function(data, ...) {
   alpha_dt <- plot_alpha(data$countData, data$colData, returnData = TRUE)
   data$alphaData <- alpha_dt[as.data.table(data$colData, keep.rownames = "Samples"), on = "Samples"]
   return(data)
 }
 
-FUN_exp <- apply_to_subsets(FUN_exp, calculate_alpha_diversity)
-FUN_time <- apply_to_subsets(FUN_time, calculate_alpha_diversity)
-BAC_exp <- apply_to_subsets(BAC_exp, calculate_alpha_diversity)
-BAC_time <- apply_to_subsets(BAC_time, calculate_alpha_diversity)
+EXP <- apply_to_subsets(EXP, calculate_alpha_diversity)
+TIME <- apply_to_subsets(TIME, calculate_alpha_diversity)
+
+# FUN_exp <- apply_to_subsets(FUN_exp, calculate_alpha_diversity)
+# FUN_time <- apply_to_subsets(FUN_time, calculate_alpha_diversity)
+# BAC_exp <- apply_to_subsets(BAC_exp, calculate_alpha_diversity)
+# BAC_time <- apply_to_subsets(BAC_time, calculate_alpha_diversity)
 
 ```
 
@@ -231,69 +284,61 @@ BAC_time <- apply_to_subsets(BAC_time, calculate_alpha_diversity)
 #' @title Analyze alpha diversity
 #' @description Perform alpha diversity analysis on each subset of data
 #' @param data A list containing countData and colData
-#' @param name A string representing the name of the data (e.g., "Fungi" or "Bacteria")
+#' @param kingdom A string representing the kingdom of the data (e.g., "Fungi" or "Bacteria")
 #' @param source A string representing the source of the data (e.g., "root" or "soil")
 #' @param metrics A vector of alpha diversity metrics to analyze
 #' @param formula A formula for the model to use in the analysis
 #' @return A list with the alpha diversity results
 #'
-analyse_alpha_diversity <- function(data, name, source, metrics, formula) {
-  cat(paste0("\nAnalyzing alpha diversity for ", name, ":", source, "\n"))
+analyse_alpha_diversity <- function(data, kingdom, source, metrics, formula) {
+  cat(paste0("\nAnalyzing alpha diversity for ", kingdom, ": ", source, "\n"))
 
   # Run alpha diversity analysis for each metric
   anova_results <- list()
   for (met in metrics) {
-    cat("  - Metric:", met, "\n")
-    # Ensure the metric column exists and is numeric before ranking
+
+    # Ensure the metric column exists
     if (!met %in% names(data$alphaData)) {
-      warning("Metric '", met, "' not found in alpha data for ", name, ": ", source)
-      next
-    }
-    if (!is.numeric(data$alphaData[[met]])) {
-      warning("Metric '", met, "' is not numeric in alpha data for ", name, ": ", source, ". Skipping ANOVA.")
+      warning("Metric '", met, "' not found in alpha data for ", kingdom, ": ", source)
       next
     }
     
-    # Create a temporary column for the ranked metric for the model
-    temp_dt <- copy(data$alphaData) # Work on a copy to avoid modifying original alpha_dt in place with 'metric' column
-    temp_dt[, model_metric := rank(get(met))]
-    # Update the formula to use the temporary 'model_metric'
-    model_formula <- update(formula, model_metric ~ .)
-    # Ensure all variables in the formula exist in the data
-    formula_vars <- all.vars(model_formula)
-    if (!all(formula_vars %in% names(temp_dt))) {
-      missing_vars <- setdiff(formula_vars, names(temp_dt))
-      warning("Missing variables in data for ", name, ":", source, ":", paste(missing_vars, collapse = ", "), ". Skipping ANOVA for metric ", met)
-      next
-    }
+    temp_dt <- copy(data$alphaData)
+    temp_dt[, model_metric := rank(get(met))] # Rank of metric
     # Run the permutation model
     res <- tryCatch({
-      perm.lmer(model_formula, temp_dt, type = "anova", nperm = 1000)
+      perm.lmer(update(formula, model_metric ~ .), temp_dt, type = "anova", nperm = 1000)
     }, error = function(e) {
-      warning("Error running perm.lmer for ", name, ":", source, ", metric ", met, ": ", e$message)
+      warning("Error running perm.lmer for ", kingdom, ":", source, ", metric ", met, ": ", e$message)
       NULL # Return NULL on error
     })
+
     if (!is.null(res)) {
-      print(res) # Print the ANOVA table
-      # print()
-      # anova_results[[met]] <- res$anova # Store the result
+      res$metric <- met
+      anova_results[[met]] <- res
     } else {
-      # anova_results[[met]] <- "Error" # Indicate error
-      warning("ANOVA for ", name, ":", source, ", metric ", met, " failed.")
+      anova_results[[met]] <- "Error" # Indicate error
+      warning("ANOVA for ", kingdom, ":", source, ", metric ", met, " failed.")
     }
   }
-  # Return results (e.g., the alpha data and ANOVA results)
-  # return(data$alphaData) # Return the alpha data with metrics
+  results <- rbindlist(anova_results)
+  results$kingdom <- kingdom
+  results$source  <- source
+  results$stars   <- p_stars(results$p)
+  results
 }
 
 # Define metrics
 metrics <- c("S.chao1", "shannon", "simpson")
 
-apply_to_subsets(FUN_exp, analyse_alpha_diversity, "Fungi Experiment", metrics, E_DESIGN)
-apply_to_subsets(FUN_time, analyse_alpha_diversity, "Fungi Timepoint", metrics, T_DESIGN)
+exp_alpha_list <- apply_to_subsets(EXP, analyse_alpha_diversity, metrics, E_DESIGN)
+exp_alpha <- exp_alpha_list |> unlist(recursive = FALSE) |> rbindlist()
 
-apply_to_subsets(BAC_exp, analyse_alpha_diversity, "Bacteria Experiment", metrics, E_DESIGN)
-apply_to_subsets(BAC_time, analyse_alpha_diversity, "Bacteria Timepoint", metrics, T_DESIGN)
+time_alpha_list <- apply_to_subsets(TIME, analyse_alpha_diversity, metrics, T_DESIGN)
+time_alpha <- time_alpha_list |> unlist(recursive = FALSE) |> rbindlist()
+
+exp_alpha[p <= 0.05 & Factor != "(Intercept)"]
+time_alpha[p <= 0.05 & Factor != "(Intercept)"]
 
 ```
 
@@ -306,7 +351,7 @@ measures <- c("Shannon", "Simpson")
 # Root fungi
 
 alpha_FUN_root_exp <- plot_alpha(
-  FUN_exp$root$countData, FUN_exp$root$colData,
+  EXP$FUN$root$countData, EXP$FUN$root$colData,
   design = "experiment", colour = "weeks",
   measures = measures,
   type = "box"
@@ -319,7 +364,7 @@ ggsave(filename = "alpha_FUN_root_exp.png", path = FIGURES_DIR)
 # Soil fungi
 
 alpha_FUN_soil_exp <- plot_alpha(
-  FUN_exp$soil$countData, FUN_exp$soil$colData,
+  EXP$FUN$soil$countData, EXP$FUN$soil$colData,
   design = "experiment", colour = "weeks",
   measures = measures,
   type = "box"
@@ -332,7 +377,7 @@ ggsave(filename = "alpha_FUN_soil_exp.png", path = FIGURES_DIR)
 # Root bacteria
 
 alpha_BAC_root_exp <- plot_alpha(
-  BAC_exp$root$countData, BAC_exp$root$colData,
+  EXP$BAC$root$countData, EXP$BAC$root$colData,
   design = "experiment", colour = "weeks",
   measures = measures,
   type = "box"
@@ -345,20 +390,7 @@ ggsave(filename = "alpha_BAC_root_exp.png", path = FIGURES_DIR)
 # Soil bacteria
 
 alpha_BAC_soil_exp <- plot_alpha(
-  BAC_exp$soil$countData, BAC_exp$soil$colData,
-  design = "experiment", colour = "weeks",
-  measures = measures,
-  type = "box"
-) + scale_colour_manual(values = cbPalette) +
-  # theme(axis.title.x = element_blank()) +
-  ggtitle("Bacteria: root")
-alpha_BAC_root_exp
-ggsave(filename = "alpha_BAC_root_exp.png", path = FIGURES_DIR)
-
-# Soil bacteria
-
-alpha_BAC_soil_exp <- plot_alpha(
-  BAC_exp$soil$countData, BAC_exp$soil$colData,
+  EXP$BAC$soil$countData, EXP$BAC$soil$colData,
   design = "experiment", colour = "weeks",
   measures = measures,
   type = "box"
@@ -471,11 +503,10 @@ e_design <- vg ~ treatment * experiment + experiment:block
 
 t_design <- vg ~ treatment * timepoint
 
-adonis_analysis <- function(data, name, source, design, strata = NULL, nperm = 1000) {
-  cat("\n", name, ":", source, "\n")
+adonis_analysis <- function(data, kingdom, source, design, strata = NULL, nperm = 1000) {
   set.seed(SEED)
   vg <- vegdist(t(counts(data$dds, normalize = T)), method = "bray")
-  adonis2(
+  model <- adonis2(
     update(design, vg ~ .),
     data$colData,
     strata = if (!is.null(strata)) data$colData[[strata]] else NULL,
@@ -483,15 +514,43 @@ adonis_analysis <- function(data, name, source, design, strata = NULL, nperm = 1
     permutations = nperm,
     by = "terms"
   )
+  results <- data.frame(model)
+  total_ss <- results["Total", "SumOfSqs"]
+  data.table(
+    kingdom = kingdom,
+    source  = source,
+    factor  = rownames(results),
+    df      = results$Df,
+    SS      = results$SumOfSqs,
+    R2      = results$R2,
+    F       = results$F,
+    P       = results$Pr..F.,
+    stars   = p_stars(results$Pr..F.),
+    var     = results$SumOfSqs / total_ss * 100,
+    n_perm  = attr(model, "control")$nperm
+  )
 }
+
+adonis_analysis(EXP$FUN$soil, "FUN", "soil", e_design)
+
+adonis_analysis(TIME$FUN$soil, "FUN", "soil", t_design, "plot")
 
 
 # Apply adonis analysis to each subset of data
-apply_to_subsets(FUN_exp, adonis_analysis, "Fungi Experiment", e_design)
-apply_to_subsets(BAC_exp, adonis_analysis, "Bacteria Experiment", e_design)
+exp_bc_list <- apply_to_subsets(EXP, adonis_analysis, e_design)
+exp_bc <- exp_bc_list |> unlist(recursive = FALSE) |> rbindlist()
 
-apply_to_subsets(FUN_time, adonis_analysis, "Fungi Timepoint", t_design, "plot")
-apply_to_subsets(BAC_time, adonis_analysis, "Bacteria Timepoint", t_design, "plot")
+time_bc_list <- apply_to_subsets(TIME, adonis_analysis, t_design, "plot")
+time_bc <- time_bc_list |> unlist(recursive = FALSE) |> rbindlist()
+
+exp_bc[P < 0.05]
+time_bc[P < 0.05]
+
+# apply_to_subsets(FUN_exp, adonis_analysis, "Fungi Experiment", e_design)
+# apply_to_subsets(BAC_exp, adonis_analysis, "Bacteria Experiment", e_design)
+
+# apply_to_subsets(FUN_time, adonis_analysis, "Fungi Timepoint", t_design, "plot")
+# apply_to_subsets(BAC_time, adonis_analysis, "Bacteria Timepoint", t_design, "plot")
 
 # df <- result %>% data.frame()
 # df$Perc.Var <- df$SumOfSqs / df["Total", "SumOfSqs"] * 100
@@ -532,10 +591,10 @@ nmdsPlot <- function(dds, shape, filename) {
 
 # Experiment
 
-nmds_exp_fun_root <- nmdsPlot(FUN_exp$root$dds, shape = "experiment", filename = "NMDS_FUN_root_exp.png")
-nmds_exp_fun_soil <- nmdsPlot(FUN_exp$soil$dds, shape = "experiment", filename = "NMDS_FUN_soil_exp.png")
-nmds_exp_bac_root <- nmdsPlot(BAC_exp$root$dds, shape = "experiment", filename = "NMDS_BAC_root_exp.png")
-nmds_exp_bac_soil <- nmdsPlot(BAC_exp$soil$dds, shape = "experiment", filename = "NMDS_BAC_soil_exp.png")
+nmds_exp_fun_root <- nmdsPlot(EXP$FUN$root$dds, shape = "experiment", filename = "NMDS_FUN_root_exp.png")
+nmds_exp_fun_soil <- nmdsPlot(EXP$FUN$soil$dds, shape = "experiment", filename = "NMDS_FUN_soil_exp.png")
+nmds_exp_bac_root <- nmdsPlot(EXP$BAC$root$dds, shape = "experiment", filename = "NMDS_BAC_root_exp.png")
+nmds_exp_bac_soil <- nmdsPlot(EXP$BAC$soil$dds, shape = "experiment", filename = "NMDS_BAC_soil_exp.png")
 
 nmds_exp_combined <- ggarrange(
   plotlist = list(nmds_exp_fun_root, nmds_exp_fun_soil, nmds_exp_bac_root, nmds_exp_bac_soil),
@@ -548,10 +607,10 @@ ggsave("NMDS_exp.png", plot = nmds_exp_combined, path = FIGURES_DIR)
 
 # Timepoint
 
-nmds_time_fun_root <- nmdsPlot(FUN_time$root$dds, shape = "timepoint", filename = "NMDS_FUN_root_time.png")
-nmds_time_fun_soil <- nmdsPlot(FUN_time$soil$dds, shape = "timepoint", filename = "NMDS_FUN_soil_time.png")
-nmds_time_bac_root <- nmdsPlot(BAC_time$root$dds, shape = "timepoint", filename = "NMDS_BAC_root_time.png")
-nmds_time_bac_soil <- nmdsPlot(BAC_time$soil$dds, shape = "timepoint", filename = "NMDS_BAC_soil_time.png")
+nmds_time_fun_root <- nmdsPlot(TIME$FUN$root$dds, shape = "timepoint", filename = "NMDS_FUN_root_time.png")
+nmds_time_fun_soil <- nmdsPlot(TIME$FUN$soil$dds, shape = "timepoint", filename = "NMDS_FUN_soil_time.png")
+nmds_time_bac_root <- nmdsPlot(TIME$BAC$root$dds, shape = "timepoint", filename = "NMDS_BAC_root_time.png")
+nmds_time_bac_soil <- nmdsPlot(TIME$BAC$soil$dds, shape = "timepoint", filename = "NMDS_BAC_soil_time.png")
 
 nmds_time_combined <- ggarrange(
   plotlist = list(nmds_time_fun_root, nmds_time_fun_soil, nmds_time_bac_root, nmds_time_bac_soil),
@@ -569,7 +628,6 @@ ggsave("NMDS_time.png", plot = nmds_time_combined, path = FIGURES_DIR)
 
 ```{r pca, eval = FALSE}
 
-n_pcs <- 10
 
 # fun_pca <- des_to_pca(FUN$dds)
 # # fun_pca <- t(data.frame(t(pca$x) * pca$percentVar))
@@ -578,7 +636,7 @@ n_pcs <- 10
 # # bac_pca <- t(data.frame(t(pca$x) * pca$percentVar))
 
 # Apply PCA to subsets
-pca_subset <- function(data, name, source) {
+pca_subset <- function(data, name, source, n_pcs) {
   # Calculate PCA scores
   pca <- des_to_pca(data$dds)
 
@@ -595,10 +653,16 @@ pca_subset <- function(data, name, source) {
   return(data)
 }
 
-FUN_exp  <- apply_to_subsets(FUN_exp,  pca_subset, "Fungi experiment")
-BAC_exp  <- apply_to_subsets(BAC_exp,  pca_subset, "Bacteria experiment")
-FUN_time <- apply_to_subsets(FUN_time, pca_subset, "Fungi timepoint")
-BAC_time <- apply_to_subsets(BAC_time, pca_subset, "Bacteria timepoint")
+n_pcs <- 10
+
+EXP  <- apply_to_subsets(EXP, pca_subset, n_pcs)
+TIME <- apply_to_subsets(TIME, pca_subset, n_pcs)
+
+
+# FUN_exp  <- apply_to_subsets(FUN_exp,  pca_subset, "Fungi experiment")
+# BAC_exp  <- apply_to_subsets(BAC_exp,  pca_subset, "Bacteria experiment")
+# FUN_time <- apply_to_subsets(FUN_time, pca_subset, "Fungi timepoint")
+# BAC_time <- apply_to_subsets(BAC_time, pca_subset, "Bacteria timepoint")
 
 
 
@@ -767,17 +831,6 @@ diff_abundance <- function(data) {
   res_e1  <- results(data$dds, name = "treatment_1_vs_0")
   res_e2  <- results(data$dds, contrast = list(c("treatment_1_vs_0", "treatment1.experiment2")))
   res_int <- results(data$dds, name = "treatment1.experiment2")
-
-  # Helper function for significance stars
-  p_stars <- function(p) {
-    ifelse(is.na(p), "",
-      ifelse(p < 0.001, "***",
-        ifelse(p < 0.01, "**",
-          ifelse(p < 0.05, "*", "")
-        )
-      )
-    )
-  }
 
   # Combine into a data.table
   dt <- data.table(

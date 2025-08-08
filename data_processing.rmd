@@ -43,6 +43,7 @@ library(gridExtra)
 library(here)
 library(kableExtra)
 library(vegan)
+library(viridis)
 
 ```
 
@@ -328,65 +329,76 @@ Subset by each source (root and soil).
 
 ```{r subset data}
 
-FUN_exp <- list(
-  root = list(
-    countData = FUN$countData[, FUN$colData$source == "root" & FUN$colData$timepoint == 1],
-    colData = FUN$colData[FUN$colData$source == "root" & FUN$colData$timepoint == 1, ]
-  ),
-  soil = list(
-    countData = FUN$countData[, FUN$colData$source == "soil" & FUN$colData$timepoint == 1],
-    colData = FUN$colData[FUN$colData$source == "soil" & FUN$colData$timepoint == 1, ]
-  )
-)
+# FUN_exp <- list(
+#   root = list(
+#     countData = FUN$countData[, FUN$colData$source == "root" & FUN$colData$timepoint == 1],
+#     colData = FUN$colData[FUN$colData$source == "root" & FUN$colData$timepoint == 1, ]
+#   ),
+#   soil = list(
+#     countData = FUN$countData[, FUN$colData$source == "soil" & FUN$colData$timepoint == 1],
+#     colData = FUN$colData[FUN$colData$source == "soil" & FUN$colData$timepoint == 1, ]
+#   )
+# )
 
-FUN_time <- list(
-  root = list(
-    countData = FUN$countData[, FUN$colData$source == "root" & FUN$colData$experiment == 1],
-    colData = FUN$colData[FUN$colData$source == "root" & FUN$colData$experiment == 1, ]
-  ),
-  soil = list(
-    countData = FUN$countData[, FUN$colData$source == "soil" & FUN$colData$experiment == 1],
-    colData = FUN$colData[FUN$colData$source == "soil" & FUN$colData$experiment == 1, ]
-  )
-)
+# FUN_time <- list(
+#   root = list(
+#     countData = FUN$countData[, FUN$colData$source == "root" & FUN$colData$experiment == 1],
+#     colData = FUN$colData[FUN$colData$source == "root" & FUN$colData$experiment == 1, ]
+#   ),
+#   soil = list(
+#     countData = FUN$countData[, FUN$colData$source == "soil" & FUN$colData$experiment == 1],
+#     colData = FUN$colData[FUN$colData$source == "soil" & FUN$colData$experiment == 1, ]
+#   )
+# )
 
-BAC_exp <- list(
-  root = list(
-    countData = BAC$countData[, BAC$colData$source == "root" & BAC$colData$timepoint == 1],
-    colData = BAC$colData[BAC$colData$source == "root" & BAC$colData$timepoint == 1, ]
-  ),
-  soil = list(
-    countData = BAC$countData[, BAC$colData$source == "soil" & BAC$colData$timepoint == 1],
-    colData = BAC$colData[BAC$colData$source == "soil" & BAC$colData$timepoint == 1, ]
-  )
-)
+# BAC_exp <- list(
+#   root = list(
+#     countData = BAC$countData[, BAC$colData$source == "root" & BAC$colData$timepoint == 1],
+#     colData = BAC$colData[BAC$colData$source == "root" & BAC$colData$timepoint == 1, ]
+#   ),
+#   soil = list(
+#     countData = BAC$countData[, BAC$colData$source == "soil" & BAC$colData$timepoint == 1],
+#     colData = BAC$colData[BAC$colData$source == "soil" & BAC$colData$timepoint == 1, ]
+#   )
+# )
 
-BAC_time <- list(
-  root = list(
-    countData = BAC$countData[, BAC$colData$source == "root" & BAC$colData$experiment == 1],
-    colData = BAC$colData[BAC$colData$source == "root" & BAC$colData$experiment == 1, ]
-  ),
-  soil = list(
-    countData = BAC$countData[, BAC$colData$source == "soil" & BAC$colData$experiment == 1],
-    colData = BAC$colData[BAC$colData$source == "soil" & BAC$colData$experiment == 1, ]
-  )
-)
+# BAC_time <- list(
+#   root = list(
+#     countData = BAC$countData[, BAC$colData$source == "root" & BAC$colData$experiment == 1],
+#     colData = BAC$colData[BAC$colData$source == "root" & BAC$colData$experiment == 1, ]
+#   ),
+#   soil = list(
+#     countData = BAC$countData[, BAC$colData$source == "soil" & BAC$colData$experiment == 1],
+#     colData = BAC$colData[BAC$colData$source == "soil" & BAC$colData$experiment == 1, ]
+#   )
+# )
 
-```
 
-```{r add taxData}
-
-# Add taxData
-add_taxData <- function(data, taxData) {
-  data$taxData <- taxData
-  data
+make_subsets <- function(data, group_var, sources = c("root", "soil")) {
+  out <- list()
+  for (src in sources) {
+    sample_idx <- data$colData$source == src & data$colData[[group_var]] == 1
+    samples    <- rownames(data$colData)[sample_idx]
+    asv_idx    <- rowSums(data$countData[, samples]) > 0 # Drop rows of 0s
+    asvs       <- rownames(data$countData)[asv_idx]
+    out[[src]] <- list(
+      colData   = data$colData[samples, ],
+      countData = data$countData[asvs, samples],
+      taxData   = data$taxData[asvs, ]
+    )
+  }
+  out
 }
 
-FUN_exp <- apply_to_subsets(FUN_exp, add_taxData, taxData = FUN$taxData)
-BAC_exp <- apply_to_subsets(BAC_exp, add_taxData, taxData = BAC$taxData)
+EXP <- list(
+  FUN = make_subsets(FUN, group_var = "timepoint"),
+  BAC = make_subsets(BAC, group_var = "timepoint")
+)
 
-FUN_time <- apply_to_subsets(FUN_time, add_taxData, taxData = FUN$taxData)
-BAC_time <- apply_to_subsets(BAC_time, add_taxData, taxData = BAC$taxData)
+TIME <- list(
+  FUN = make_subsets(FUN, group_var = "experiment"),
+  BAC = make_subsets(BAC, group_var = "experiment")
+)
 
 ```
 
@@ -400,7 +412,7 @@ Size factor values are centred around the mean of the copy number.
 
 ```{r DESeq}
 
-create_dds_subset <- function(data, name, source, design = ~ 1) {
+create_dds <- function(data, name, source, design = ~ 1) {
   if(identical(colnames(data$countData), rownames(data$colData))) {
 
     # Create DESeq object
@@ -419,27 +431,33 @@ create_dds_subset <- function(data, name, source, design = ~ 1) {
     print(paste0(name, ": ", source, " DESeq object created"))
   } else {
     stop(paste0(name, ": ", source, " countData and colData do not match"))
+    next
   }
 }
 
-FUN_exp  <- apply_to_subsets(FUN_exp, create_dds_subset, "Fungi")
-FUN_time <- apply_to_subsets(FUN_time, create_dds_subset, "Fungi")
+# FUN_exp  <- apply_to_subsets(FUN_exp, create_dds)
+# FUN_time <- apply_to_subsets(FUN_time, create_dds)
 
-BAC_exp  <- apply_to_subsets(BAC_exp, create_dds_subset, "Bacteria")
-BAC_time <- apply_to_subsets(BAC_time, create_dds_subset, "Bacteria")
+# BAC_exp  <- apply_to_subsets(BAC_exp, create_dds)
+# BAC_time <- apply_to_subsets(BAC_time, create_dds)
+
+EXP <- apply_to_subsets(EXP, create_dds)
+TIME <- apply_to_subsets(TIME, create_dds)
 
 ```
 
-## Export data  objects
+## Export data objects
 
 ```{r export objects}
 
 saveRDS(FUN, here(OBJECT_DIR, "FUN.rds"))
 saveRDS(BAC, here(OBJECT_DIR, "BAC.rds"))
-saveRDS(FUN_exp, here(OBJECT_DIR, "FUN_exp.rds"))
-saveRDS(BAC_exp, here(OBJECT_DIR, "BAC_exp.rds"))
-saveRDS(FUN_time, here(OBJECT_DIR, "FUN_time.rds"))
-saveRDS(BAC_time, here(OBJECT_DIR, "BAC_time.rds"))
+saveRDS(EXP, here(OBJECT_DIR, "EXP.rds"))
+saveRDS(TIME, here(OBJECT_DIR, "TIME.rds"))
+# saveRDS(FUN_exp, here(OBJECT_DIR, "FUN_exp.rds"))
+# saveRDS(BAC_exp, here(OBJECT_DIR, "BAC_exp.rds"))
+# saveRDS(FUN_time, here(OBJECT_DIR, "FUN_time.rds"))
+# saveRDS(BAC_time, here(OBJECT_DIR, "BAC_time.rds"))
 
 ```
 
