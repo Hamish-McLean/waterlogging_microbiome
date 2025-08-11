@@ -23,6 +23,15 @@ apply_to_subsets <- function(data_list, func, ...) {
 }
 
 
+#' @title Flatten and rowbind a nested list of tables
+#' @param data_list A nested list of tables
+#' @return A single table of data
+#' 
+combine_tables <- function(data_list) {
+  unlist(data_list, recursive = FALSE) |> rbindlist()
+}
+
+
 #' @title Significance stars
 #' @description Returns significance stars based on a p-value
 #' @param p A p-value or list of p-values
