@@ -369,7 +369,7 @@ printTable <- function(table, caption = NULL) {
         dom = "Bt",
         buttons = "copy",
         scrollX = TRUE,
-        pageLength = 20,
+        pageLength = 70,
         lengthMenu = c(10, 20, 50, 100, -1),
         autoWidth = TRUE
       ),

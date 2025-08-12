@@ -40,6 +40,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = TRU
 
 library(buildmer)
 library(car)
+library(cowplot)
 library(data.table)
 library(DESeq2)
 library(dplyr)
@@ -241,8 +242,8 @@ if (!alpha_cache) {
   saveRDS(exp_alpha,  here(OBJECT_DIR, "exp_alpha.rds"))
   saveRDS(time_alpha, here(OBJECT_DIR, "time_alpha.rds"))
 } else {
-  exp_alpha <- readRDS(here(OBJECT_DIR, "exp_alpha.rds"))
-  exp_alpha <- readRDS(here(OBJECT_DIR, "exp_alpha.rds"))
+  exp_alpha  <- readRDS(here(OBJECT_DIR, "exp_alpha.rds"))
+  time_alpha <- readRDS(here(OBJECT_DIR, "time_alpha.rds"))
 }
 
  exp_alpha[p <= 0.05 & factor != "(Intercept)"] |> printTable()
@@ -254,84 +255,129 @@ time_alpha[p <= 0.05 & factor != "(Intercept)"] |> printTable()
 
 ```{r alpha diversity plots}
 
-measures <- c("Shannon", "Simpson")
+measures <- c("Chao1", "Shannon", "Simpson")
 
-# Root fungi
+plotAlpha <- function(data, k, s, measures, design) {
+  plot_alpha(
+    data$countData, data$colData,
+    design = design, colour = "weeks",
+    measures = measures,
+    type = "box"
+  ) + scale_colour_manual(values = cbPalette) +
+    # theme(axis.title.x = element_blank()) +
+    ggtitle(paste(k, ":", s))
+}
 
-alpha_FUN_root_exp <- plot_alpha(
-  EXP$FUN$root$countData, EXP$FUN$root$colData,
-  design = "experiment", colour = "weeks",
-  measures = measures,
-  type = "box"
-) + scale_colour_manual(values = cbPalette) +
-  # theme(axis.title.x = element_blank()) +
-  ggtitle("Fungi: root")
-alpha_FUN_root_exp
-ggsave(filename = "alpha_FUN_root_exp.png", path = FIGURES_DIR)
+exp_alpha_plots <- apply_to_subsets(EXP, plotAlpha, measures, "experiment") |> unlist(FALSE)
 
-# Soil fungi
+# ggarrange(exp_alpha_plots, ncol = 2, common.legend = TRUE, legend = "bottom")
 
-alpha_FUN_soil_exp <- plot_alpha(
-  EXP$FUN$soil$countData, EXP$FUN$soil$colData,
-  design = "experiment", colour = "weeks",
-  measures = measures,
-  type = "box"
-) + scale_colour_manual(values = cbPalette) +
-  # theme(axis.title.x = element_blank()) +
-  ggtitle("Fungi: soil")
-alpha_FUN_soil_exp
-ggsave(filename = "alpha_FUN_soil_exp.png", path = FIGURES_DIR)
-
-# Root bacteria
-
-alpha_BAC_root_exp <- plot_alpha(
-  EXP$BAC$root$countData, EXP$BAC$root$colData,
-  design = "experiment", colour = "weeks",
-  measures = measures,
-  type = "box"
-) + scale_colour_manual(values = cbPalette) +
-  # theme(axis.title.x = element_blank()) +
-  ggtitle("Bacteria: root")
-alpha_BAC_root_exp
-ggsave(filename = "alpha_BAC_root_exp.png", path = FIGURES_DIR)
-
-# Soil bacteria
-
-alpha_BAC_soil_exp <- plot_alpha(
-  EXP$BAC$soil$countData, EXP$BAC$soil$colData,
-  design = "experiment", colour = "weeks",
-  measures = measures,
-  type = "box"
-) + scale_colour_manual(values = cbPalette) +
-  # theme(axis.title.x = element_blank()) +
-  ggtitle("Bacteria: soil")
-alpha_BAC_soil_exp
-ggsave(filename = "alpha_BAC_soil_exp.png", path = FIGURES_DIR)
-
-# alpha_exp_combined <- ggarrange(
-#   list(
-#     alpha_FUN_root_exp, alpha_FUN_soil_exp,
-#     alpha_BAC_root_exp, alpha_BAC_soil_exp
-#   ),
-#   ncol = 2, nrow = 2,
-#   labels = c("Fungi Root", "Fungi Soil", "Bacteria Root", "Bacteria Soil"),
-#   common.legend = TRUE, legend = "bottom"
+# plot_grid(
+#   plotlist = exp_alpha_plots,
+#   align = "h",
+#   ncol = 2
 # )
 
-alpha_exp_combined <- (
-  alpha_FUN_root_exp + alpha_FUN_soil_exp
-) / (
-  alpha_BAC_root_exp + alpha_BAC_soil_exp
-) +
+(exp_alpha_plots[[1]] + exp_alpha_plots[[2]]) / (exp_alpha_plots[[3]] + exp_alpha_plots[[4]]) +
   plot_layout(guides = "collect") & # Collect legends into a single common legend
   theme(legend.position = "bottom") # Position the common legend
 
+ggsave("alpha_EXP.png", path = FIGURES_DIR)
 
-alpha_exp_combined
-ggsave(
-  filename = "alpha_exp_combined.png", plot = alpha_exp_combined, path = FIGURES_DIR
-  # width = 10, height = 10, units = "cm"
-)
+
+time_alpha_plots <- apply_to_subsets(TIME, plotAlpha, measures, "timepoint") |> unlist(FALSE)
+
+(time_alpha_plots[[1]] + time_alpha_plots[[2]]) / (time_alpha_plots[[3]] + time_alpha_plots[[4]]) +
+  plot_layout(guides = "collect") & # Collect legends into a single common legend
+  theme(legend.position = "bottom") # Position the common legend
+
+ggsave("alpha_TIME.png", path = FIGURES_DIR)
+
+
+
+# exp_alpha_plots
+
+# combineAlphaPlot <- function(plots) {
+#   unlist(plots, FALSE)
+# }
+
+
+# Root fungi
+
+# alpha_FUN_root_exp <- plot_alpha(
+#   EXP$FUN$root$countData, EXP$FUN$root$colData,
+#   design = "experiment", colour = "weeks",
+#   measures = measures,
+#   type = "box"
+# ) + scale_colour_manual(values = cbPalette) +
+#   # theme(axis.title.x = element_blank()) +
+#   ggtitle("Fungi: root")
+# alpha_FUN_root_exp
+# ggsave(filename = "alpha_FUN_root_exp.png", path = FIGURES_DIR)
+
+# # Soil fungi
+
+# alpha_FUN_soil_exp <- plot_alpha(
+#   EXP$FUN$soil$countData, EXP$FUN$soil$colData,
+#   design = "experiment", colour = "weeks",
+#   measures = measures,
+#   type = "box"
+# ) + scale_colour_manual(values = cbPalette) +
+#   # theme(axis.title.x = element_blank()) +
+#   ggtitle("Fungi: soil")
+# alpha_FUN_soil_exp
+# ggsave(filename = "alpha_FUN_soil_exp.png", path = FIGURES_DIR)
+
+# # Root bacteria
+
+# alpha_BAC_root_exp <- plot_alpha(
+#   EXP$BAC$root$countData, EXP$BAC$root$colData,
+#   design = "experiment", colour = "weeks",
+#   measures = measures,
+#   type = "box"
+# ) + scale_colour_manual(values = cbPalette) +
+#   # theme(axis.title.x = element_blank()) +
+#   ggtitle("Bacteria: root")
+# alpha_BAC_root_exp
+# ggsave(filename = "alpha_BAC_root_exp.png", path = FIGURES_DIR)
+
+# # Soil bacteria
+
+# alpha_BAC_soil_exp <- plot_alpha(
+#   EXP$BAC$soil$countData, EXP$BAC$soil$colData,
+#   design = "experiment", colour = "weeks",
+#   measures = measures,
+#   type = "box"
+# ) + scale_colour_manual(values = cbPalette) +
+#   # theme(axis.title.x = element_blank()) +
+#   ggtitle("Bacteria: soil")
+# alpha_BAC_soil_exp
+# ggsave(filename = "alpha_BAC_soil_exp.png", path = FIGURES_DIR)
+
+# # alpha_exp_combined <- ggarrange(
+# #   list(
+# #     alpha_FUN_root_exp, alpha_FUN_soil_exp,
+# #     alpha_BAC_root_exp, alpha_BAC_soil_exp
+# #   ),
+# #   ncol = 2, nrow = 2,
+# #   labels = c("Fungi Root", "Fungi Soil", "Bacteria Root", "Bacteria Soil"),
+# #   common.legend = TRUE, legend = "bottom"
+# # )
+
+# alpha_exp_combined <- (
+#   alpha_FUN_root_exp + alpha_FUN_soil_exp
+# ) / (
+#   alpha_BAC_root_exp + alpha_BAC_soil_exp
+# ) +
+#   plot_layout(guides = "collect") & # Collect legends into a single common legend
+#   theme(legend.position = "bottom") # Position the common legend
+
+
+# alpha_exp_combined
+# ggsave(
+#   filename = "alpha_exp_combined.png", plot = alpha_exp_combined, path = FIGURES_DIR
+#   # width = 10, height = 10, units = "cm"
+# )
 
 ```
 
@@ -447,16 +493,25 @@ apply_to_subsets(TIME, pcaLMM, T_DESIGN) |> combine_tables() |>
 PCs of interest:
 
 Experiment
+
 - Fungi root: PC8 (int), PC9 (trt)
+
 - Fungi soil: PC6 (trt, exp, & int)
+
 - Bacteria root: PC7 (trt & int), PC8 (trt)
+
 - Bacteria soil: PC3 (trt), PC4 (trt), PC8 (int), PC11 (trt), PC18 (int)
 
 Timepoint
+
 - Fungi root: PC4 (trt), PC5 (trt), PC10 (trt)
+
 - Fungi soil: PC6 (int), PC7 (trt)
+
 - Bacteria root: PC5 (trt, int), PC7 (trt, int), PC11 (int), PC12 (int)
+
 - Bacteria soil: PC5 (trt, time, int), PC15(time, int)
+
 
 ### PC plots
 
@@ -560,6 +615,38 @@ time_da <- split(
   apply_to_subsets(TIME, diffAbundance, "timepoint") |> combine_tables(),
   f = ~ kingdom
 )
+
+```
+
+### Differential abundance tables {.tabset}
+
+#### EXP: FUN
+
+```{r}
+exp_da$FUN |> printTable()
+```
+
+#### EXP: BAC
+
+```{r}
+exp_da$BAC |> printTable()
+```
+
+#### TIME: FUN
+
+```{r}
+time_da$FUN |> printTable()
+```
+
+#### TIME: BAC
+
+```{r}
+time_da$BAC |> printTable()
+```
+
+### Differential abundance subsets
+
+```{r}
 
 exp_da$FUN  |> select("taxa") |> table() |> as.data.table() |> printTable()
 time_da$FUN |> select("taxa") |> table() |> as.data.table() |> printTable()
