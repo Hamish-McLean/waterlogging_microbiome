@@ -214,8 +214,6 @@ rarefaction_plots <- grid.arrange(
 
 ggsave(filename = "rarefaction_plots.png", plot = rarefaction_plots, path = FIGURES_DIR)
 
-rarefaction_plots
-
 # Fungi
 med <- median(colSums(FUN$countData))
 filt <- !colSums(FUN$countData) > med * READ_FILTER
@@ -250,11 +248,7 @@ top_asvs <- data.table(
   "Bacteria" = lapply(proportions, function(x) asv_propotions(BAC$countData, x))
 )
 
-top_asvs |> kbl()
-
-# top_asvs %>%
-#   kbl() %>%
-#   kable_styling("striped", full_width = F)
+top_asvs |> printTable()
 
 ```
 
@@ -329,51 +323,6 @@ Subset by each source (root and soil).
 
 ```{r subset data}
 
-# FUN_exp <- list(
-#   root = list(
-#     countData = FUN$countData[, FUN$colData$source == "root" & FUN$colData$timepoint == 1],
-#     colData = FUN$colData[FUN$colData$source == "root" & FUN$colData$timepoint == 1, ]
-#   ),
-#   soil = list(
-#     countData = FUN$countData[, FUN$colData$source == "soil" & FUN$colData$timepoint == 1],
-#     colData = FUN$colData[FUN$colData$source == "soil" & FUN$colData$timepoint == 1, ]
-#   )
-# )
-
-# FUN_time <- list(
-#   root = list(
-#     countData = FUN$countData[, FUN$colData$source == "root" & FUN$colData$experiment == 1],
-#     colData = FUN$colData[FUN$colData$source == "root" & FUN$colData$experiment == 1, ]
-#   ),
-#   soil = list(
-#     countData = FUN$countData[, FUN$colData$source == "soil" & FUN$colData$experiment == 1],
-#     colData = FUN$colData[FUN$colData$source == "soil" & FUN$colData$experiment == 1, ]
-#   )
-# )
-
-# BAC_exp <- list(
-#   root = list(
-#     countData = BAC$countData[, BAC$colData$source == "root" & BAC$colData$timepoint == 1],
-#     colData = BAC$colData[BAC$colData$source == "root" & BAC$colData$timepoint == 1, ]
-#   ),
-#   soil = list(
-#     countData = BAC$countData[, BAC$colData$source == "soil" & BAC$colData$timepoint == 1],
-#     colData = BAC$colData[BAC$colData$source == "soil" & BAC$colData$timepoint == 1, ]
-#   )
-# )
-
-# BAC_time <- list(
-#   root = list(
-#     countData = BAC$countData[, BAC$colData$source == "root" & BAC$colData$experiment == 1],
-#     colData = BAC$colData[BAC$colData$source == "root" & BAC$colData$experiment == 1, ]
-#   ),
-#   soil = list(
-#     countData = BAC$countData[, BAC$colData$source == "soil" & BAC$colData$experiment == 1],
-#     colData = BAC$colData[BAC$colData$source == "soil" & BAC$colData$experiment == 1, ]
-#   )
-# )
-
-
 make_subsets <- function(data, group_var, sources = c("root", "soil")) {
   out <- list()
   for (src in sources) {
@@ -435,11 +384,11 @@ create_dds <- function(data, name, source, design = ~ 1) {
   }
 }
 
-# FUN_exp  <- apply_to_subsets(FUN_exp, create_dds)
-# FUN_time <- apply_to_subsets(FUN_time, create_dds)
+# EXP$FUN  <- apply_to_subsets(EXP$FUN, create_dds)
+# TIME$FUN <- apply_to_subsets(TIME$FUN, create_dds)
 
-# BAC_exp  <- apply_to_subsets(BAC_exp, create_dds)
-# BAC_time <- apply_to_subsets(BAC_time, create_dds)
+# EXP$BAC  <- apply_to_subsets(EXP$BAC, create_dds)
+# TIME$BAC <- apply_to_subsets(TIME$BAC, create_dds)
 
 EXP <- apply_to_subsets(EXP, create_dds)
 TIME <- apply_to_subsets(TIME, create_dds)
@@ -454,10 +403,10 @@ saveRDS(FUN, here(OBJECT_DIR, "FUN.rds"))
 saveRDS(BAC, here(OBJECT_DIR, "BAC.rds"))
 saveRDS(EXP, here(OBJECT_DIR, "EXP.rds"))
 saveRDS(TIME, here(OBJECT_DIR, "TIME.rds"))
-# saveRDS(FUN_exp, here(OBJECT_DIR, "FUN_exp.rds"))
-# saveRDS(BAC_exp, here(OBJECT_DIR, "BAC_exp.rds"))
-# saveRDS(FUN_time, here(OBJECT_DIR, "FUN_time.rds"))
-# saveRDS(BAC_time, here(OBJECT_DIR, "BAC_time.rds"))
+# saveRDS(EXP$FUN, here(OBJECT_DIR, "EXP$FUN.rds"))
+# saveRDS(EXP$BAC, here(OBJECT_DIR, "EXP$BAC.rds"))
+# saveRDS(TIME$FUN, here(OBJECT_DIR, "TIME$FUN.rds"))
+# saveRDS(TIME$BAC, here(OBJECT_DIR, "TIME$BAC.rds"))
 
 ```
 
@@ -500,10 +449,10 @@ print_read_summary <- function(data, title) {
     # kable_styling("striped", full_width = F)
 }
 
-print_read_summary(FUN_exp, "Fungi Experiment Read Summary") |> kbl()
-print_read_summary(FUN_time, "Fungi Timepoint Read Summary") |> kbl()
-print_read_summary(BAC_exp, "Bacteria Experiment Read Summary") |> kbl()
-print_read_summary(BAC_time, "Bacteria Timepoint Read Summary") |> kbl()
+print_read_summary(EXP$FUN, "Fungi Experiment Read Summary") |> printTable()
+print_read_summary(TIME$FUN, "Fungi Timepoint Read Summary") |> printTable()
+print_read_summary(EXP$BAC, "Bacteria Experiment Read Summary") |> printTable()
+print_read_summary(TIME$BAC, "Bacteria Timepoint Read Summary") |> printTable()
 
 ```
 
@@ -542,7 +491,7 @@ print_asv_summary <- function(data, title) {
   )
 }
 
-print_asv_summary(FUN_exp, "Fungi Experiment ASV Summary") |> kbl()
+print_asv_summary(EXP$FUN, "Fungi Experiment ASV Summary") |> printTable()
 
 
 data.table(
