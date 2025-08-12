@@ -23,16 +23,16 @@ if (!exists("params")) params <- list(pipeline = "DADA2")
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = TRUE)
 
 # Kable options
-options(
-  browser = "false",
-  kableExtra.html.bsTable = TRUE,
-  kableExtra.bootstrap_options = c("striped", "hover", "condensed"),
-  kableExtra_view_html = interactive(),
-  knitr.table.format = "html",
-  viewer = NULL # Disable viewer to avoid opening in browser
-)
+# options(
+#   browser = "false",
+#   kableExtra.html.bsTable = TRUE,
+#   kableExtra.bootstrap_options = c("striped", "hover", "condensed"),
+#   kableExtra_view_html = interactive(),
+#   knitr.table.format = "html",
+#   viewer = NULL # Disable viewer to avoid opening in browser
+# )
 
-Sys.setenv("BROWSER" = "false")
+# Sys.setenv("BROWSER" = "false")
 
 ```
 
@@ -43,6 +43,7 @@ library(car)
 library(data.table)
 library(DESeq2)
 library(dplyr)
+library(DT)
 library(emmeans)
 library(ggpubr)
 library(gridExtra)
@@ -71,6 +72,10 @@ source(here(FUNC_DIR, "loadme.R"))
 source(here(FUNC_DIR, "metabarcoding.R"))
 source(here(FUNC_DIR, "metafuncs.R"))
 source(here(FUNC_DIR, "rarefaction.R"))
+
+# knit_print.datatable <- function(x, ...) {
+#   htmltools::browsable(x)
+# }
 
 ```
 
@@ -121,7 +126,7 @@ TIME <- readRDS(here(OBJECT_DIR, "TIME.rds"))
 
 ## Community size
 
-Copy number plots
+### Copy number plots
 
 ```{r copy number plots}
 
@@ -148,7 +153,7 @@ copy_number_experiment <- ggboxplot(
   facet.by = c("source")
 )
 
-copy_number_plots <- ggarrange(
+cn_exp_plots <- ggarrange(
   copy_number_timepoint,
   copy_number_experiment,
   ncol = 1, nrow = 2,
@@ -157,7 +162,8 @@ copy_number_plots <- ggarrange(
 
 ggsave(filename = "FUN_copy_number_plots.png", path = FIGURES_DIR)
 
-copy_number_plots
+cn_exp_plots
+
 
 copy_number_timepoint <- ggboxplot(
   filter(BAC$colData, experiment == 1), 
@@ -177,7 +183,7 @@ copy_number_experiment <- ggboxplot(
   facet.by = c("source")
 )
 
-ggarrange(
+cn_time_plots <- ggarrange(
   copy_number_timepoint,
   copy_number_experiment,
   ncol = 1, nrow = 2,
@@ -186,41 +192,21 @@ ggarrange(
 
 ggsave(filename = "BAC_copy_number_plots.png", path = FIGURES_DIR)
 
+cn_time_plots
+
 ```
 
-Copy number models
+### Copy number models
 
 ```{r copy number models}
 
-copy_number_model <- function(data, kingdom, source, design) {
-  message <- ""
-  model <- withCallingHandlers(
-    lmer(update(design, copy_number ~ .), data$colData),
-    message = function(m) {
-      message <<- sub(":.*", "", conditionMessage(m))
-      invokeRestart("muffleMessage")
-    }
-  )
-  results <- Anova(model, type = 3) |> data.frame()
-  data.table(
-    kingdom = kingdom,
-    source  = source,
-    factor  = rownames(results),
-    df      = results$Df,
-    Chisq   = results$Chisq,
-    P       = results$Pr..Chisq.,
-    stars   = p_stars(results$Pr..Chisq.),
-    message = message
-  )
-}
+exp_cn <- apply_to_subsets(EXP, copyNumberModelLMM, E_DESIGN) |> combine_tables()
 
-exp_cn <- apply_to_subsets(EXP, copy_number_model, E_DESIGN) |> combine_tables()
+time_cn <- apply_to_subsets(TIME, copyNumberModelLMM, T_DESIGN) |> combine_tables()
 
-time_cn <- apply_to_subsets(TIME, copy_number_model, T_DESIGN) |> combine_tables()
+exp_cn[P <= 0.05 & factor != "(Intercept)"] |> printTable("Experiment")
 
-exp_cn[P <= 0.05 & factor != "(Intercept)"]
-
-time_cn[P <= 0.05 & factor != "(Intercept)"]
+time_cn[P <= 0.05 & factor != "(Intercept)"] |> printTable("Timepoint")
 
 ```
 
@@ -228,21 +214,12 @@ time_cn[P <= 0.05 & factor != "(Intercept)"]
 
 ### Calculate alpha diversity
 
+Add alpha diversity idices to data objects.
+
 ```{r calculate alpha diversity}
 
-#' @title Calculate alpha diversity
-#' @description Calculate alpha diversity metrics for each subset of data
-#' @param data A list containing countData and colData
-#' @return A list with the alpha diversity data added
-#' 
-calculate_alpha_diversity <- function(data, ...) {
-  alpha_dt <- plot_alpha(data$countData, data$colData, returnData = TRUE)
-  data$alphaData <- alpha_dt[as.data.table(data$colData, keep.rownames = "Samples"), on = "Samples"]
-  return(data)
-}
-
-EXP <- apply_to_subsets(EXP, calculate_alpha_diversity)
-TIME <- apply_to_subsets(TIME, calculate_alpha_diversity)
+EXP <- apply_to_subsets(EXP, calculateAlpha)
+TIME <- apply_to_subsets(TIME, calculateAlpha)
 
 ```
 
@@ -253,60 +230,13 @@ This model takes a long time to run, so results are cached.
 
 ```{r alpha diversity analysis}
 
-#' @title Analyze alpha diversity
-#' @description Perform alpha diversity analysis on each subset of data
-#' @param data A list containing countData and colData
-#' @param kingdom A string representing the kingdom of the data (e.g., "Fungi" or "Bacteria")
-#' @param source A string representing the source of the data (e.g., "root" or "soil")
-#' @param metrics A vector of alpha diversity metrics to analyze
-#' @param formula A formula for the model to use in the analysis
-#' @return A list with the alpha diversity results
-#'
-analyse_alpha_diversity <- function(data, kingdom, source, metrics, formula) {
-  cat(paste0("\nAnalyzing alpha diversity for ", kingdom, ": ", source, "\n"))
-
-  # Run alpha diversity analysis for each metric
-  anova_results <- list()
-  for (met in metrics) {
-
-    # Ensure the metric column exists
-    if (!met %in% names(data$alphaData)) {
-      warning("Metric '", met, "' not found in alpha data for ", kingdom, ": ", source)
-      next
-    }
-    
-    temp_dt <- copy(data$alphaData)
-    temp_dt[, model_metric := rank(get(met))] # Rank of metric
-    # Run the permutation model
-    res <- tryCatch({
-      perm.lmer(update(formula, model_metric ~ .), temp_dt, type = "anova", nperm = 1000)
-    }, error = function(e) {
-      warning("Error running perm.lmer for ", kingdom, ":", source, ", metric ", met, ": ", e$message)
-      NULL # Return NULL on error
-    })
-
-    if (!is.null(res)) {
-      res$metric <- met
-      anova_results[[met]] <- res
-    } else {
-      anova_results[[met]] <- "Error" # Indicate error
-      warning("ANOVA for ", kingdom, ":", source, ", metric ", met, " failed.")
-    }
-  }
-  results <- rbindlist(anova_results)
-  results$kingdom <- kingdom
-  results$source  <- source
-  results$stars   <- p_stars(results$p)
-  results
-}
-
 # These models are very slow, only run to update the cached results
 if (!alpha_cache) {
   # Define metrics
   metrics <- c("S.chao1", "shannon", "simpson")
 
-  exp_alpha  <- apply_to_subsets(EXP, analyse_alpha_diversity, metrics, E_DESIGN) |> combine_tables()
-  time_alpha <- apply_to_subsets(TIME, analyse_alpha_diversity, metrics, T_DESIGN) |> combine_tables()
+  exp_alpha  <- apply_to_subsets(EXP, alphaModel, metrics, E_DESIGN) |> combine_tables()
+  time_alpha <- apply_to_subsets(TIME, alphaModel, metrics, T_DESIGN) |> combine_tables()
 
   saveRDS(exp_alpha,  here(OBJECT_DIR, "exp_alpha.rds"))
   saveRDS(time_alpha, here(OBJECT_DIR, "time_alpha.rds"))
@@ -315,8 +245,8 @@ if (!alpha_cache) {
   exp_alpha <- readRDS(here(OBJECT_DIR, "exp_alpha.rds"))
 }
 
-exp_alpha[p <= 0.05 & Factor != "(Intercept)"]
-time_alpha[p <= 0.05 & Factor != "(Intercept)"]
+ exp_alpha[p <= 0.05 & factor != "(Intercept)"] |> printTable()
+time_alpha[p <= 0.05 & factor != "(Intercept)"] |> printTable()
 
 ```
 
@@ -413,51 +343,20 @@ Block included as a main effect in the design formula.
 
 ```{r adonis}
 
+# Designs for ADONIS
 e_design <- vg ~ treatment * experiment + experiment:block
 
 t_design <- vg ~ treatment * timepoint
 
-adonis_analysis <- function(data, kingdom, source, design, strata = NULL, nperm = 1000) {
-  set.seed(SEED)
-  vg <- vegdist(t(counts(data$dds, normalize = T)), method = "bray")
-  model <- adonis2(
-    update(design, vg ~ .),
-    data$colData,
-    strata = if (!is.null(strata)) data$colData[[strata]] else NULL,
-    # strata = colData(dds)$experiment:colData(dds)$block, # For repeat measures
-    permutations = nperm,
-    by = "terms"
-  )
-  results <- data.frame(model)
-  total_ss <- results["Total", "SumOfSqs"]
-  data.table(
-    kingdom = kingdom,
-    source  = source,
-    factor  = rownames(results),
-    df      = results$Df,
-    SS      = results$SumOfSqs,
-    R2      = results$R2,
-    F       = results$F,
-    P       = results$Pr..F.,
-    stars   = p_stars(results$Pr..F.),
-    var     = results$SumOfSqs / total_ss * 100,
-    n_perm  = attr(model, "control")$nperm
-  )
-}
-
-adonis_analysis(EXP$FUN$soil, "FUN", "soil", e_design)
-
-adonis_analysis(TIME$FUN$soil, "FUN", "soil", t_design, "plot")
-
 
 # Apply adonis analysis to each subset of data
-exp_bc  <- apply_to_subsets(EXP, adonis_analysis, e_design) |> combine_tables()
+exp_bc  <- apply_to_subsets(EXP, adonisModel, e_design) |> combine_tables()
 
-time_bc <- apply_to_subsets(TIME, adonis_analysis, t_design, "plot") |> combine_tables()
+time_bc <- apply_to_subsets(TIME, adonisModel, t_design, "plot") |> combine_tables()
 
-exp_bc[P < 0.05]
+exp_bc[P < 0.05]  |> printTable()
 
-time_bc[P < 0.05]
+time_bc[P < 0.05] |> printTable()
 
 ```
 
@@ -466,28 +365,6 @@ time_bc[P < 0.05]
 ```{r nmds}
 
 set.seed(SEED)
-
-#' @title NMDS plot
-#' @description Create a NMDS plot for a given DESeq2 object
-#' @param dds DESeq2 object
-#' @param shape A string representing factor to use for the shape aesthetic
-#' @param filename A string representing the filename to save the plot
-#' @return A ggplot object of the NMDS plot
-#'
-nmdsPlot <- function(dds, shape, filename) {
-  vg <- vegdist(t(counts(dds, normalize = T)), method = "bray")
-  ord <- metaMDS(vg, trace=0)
-
-  plot <- plotOrd(
-    scores(ord), 
-    colData(dds), 
-    design = "treatment", 
-    shape = shape, 
-    alpha = 0.75, cbPalette = T
-  )
-  ggsave(filename, path = FIGURES_DIR)
-  return(plot)
-}
 
 # Experiment
 
@@ -529,123 +406,41 @@ ggsave("NMDS_time.png", plot = nmds_time_combined, path = FIGURES_DIR)
 
 ```{r pca}
 
-
-# fun_pca <- des_to_pca(FUN$dds)
-# # fun_pca <- t(data.frame(t(pca$x) * pca$percentVar))
-
-# bac_pca <- des_to_pca(BAC$dds)
-# # bac_pca <- t(data.frame(t(pca$x) * pca$percentVar))
-
-# Apply PCA to subsets
-pca_subset <- function(data, name, source, n_pcs) {
-  # Calculate PCA scores
-  pca <- des_to_pca(data$dds)
-
-  # Print PCA percent variance table
-  pca_var <- data.frame(
-    PC = paste0("PC", 1:n_pcs),
-    perc_var = round(pca$percentVar[1:n_pcs] * 100, 1)
-  )
-  cat("\n", name, ":", source, "\n\n")
-  print(pca_var)
-
-  # Adjust PCA scores with total variance
-  data$pca <- pca #t(data.frame(t(pca$x) * pca$percentVar))
-  return(data)
-}
-
-n_pcs <- 10
-
-EXP  <- apply_to_subsets(EXP, pca_subset, n_pcs)
-TIME <- apply_to_subsets(TIME, pca_subset, n_pcs)
+# Calculate PCA
+EXP  <- apply_to_subsets(EXP, calculatePCA)
+TIME <- apply_to_subsets(TIME, calculatePCA)
 
 
-# Summarise PCA
-pca_summary_subset <- function(data, kingdom, source, design, n_pcs = NULL) {
-  pcs      <- 1:ifelse(!is.null(n_pcs), n_pcs, ncol(data$pca$x) - 1)
-  pca_data <- as.data.frame(data$pca$x[, pcs])
-  variance <- data$pca$percentVar[pcs]
-  pc_names <- colnames(pca_data)
+# EXP PC percent variance 
+lapply(unlist(EXP, FALSE), function(x) {
+  unlist(round(x$pca$percentVar * 100, 2))
+}) |> as.data.table() |> mutate("PC" = 1:20) |> printTable()
 
-  results  <- lapply(seq_along(pcs), function(i) {
-    pc_name  <- pc_names[i]
-    df       <- cbind(PC = pca_data[[pc_name]], data$colData)
-    model    <- lm(update(design, PC ~ .), df)
-    anova    <- Anova(model, type = 3)
-    anova_df <- anova |> data.frame()
-    total_ss <- sum(anova_df$Sum.Sq)
-    data.table(
-      kingdom = kingdom,
-      source  = source,
-      pc      = pc_name,
-      factor  = rownames(anova_df),
-      SS      = anova_df$Sum.Sq,
-      df      = anova_df$Df,
-      F       = anova_df$F.value,
-      P       = anova_df$Pr..F.,
-      pc_var  = variance[i],
-      var     = anova_df$Sum.Sq / total_ss * 100,
-      var_adj = (anova_df$Sum.Sq / total_ss * 100) * variance[i]
-    )
-  })
+# TIME PC percent variance
+lapply(unlist(TIME, FALSE), function(x) {
+  unlist(round(x$pca$percentVar * 100, 2))
+}) |> as.data.table() |> mutate("PC" = 1:20) |> printTable()
 
-  bind_rows(results)[P <= 0.05 & factor != "(Intercept)"]
-}
-
-# pca_summary_subset(EXP$FUN$soil, "FUN", "soil", e_design)
 
 e_design <- ~ treatment * experiment + experiment:block
 t_design <- ~ treatment * timepoint
 
-apply_to_subsets(EXP, pca_summary_subset, e_design)  |> combine_tables()
-apply_to_subsets(TIME, pca_summary_subset, t_design) |> combine_tables()
+# EXP PCA linear model
+apply_to_subsets(EXP, pcaLM, e_design) |> combine_tables() |> 
+  filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
+
+# TIME PCA linear model
+apply_to_subsets(TIME, pcaLM, t_design) |> combine_tables() |> 
+  filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
 
 
-# Summarise PCA lmer
-pca_summary_subset_lmer <- function(data, kingdom, source, design, n_pcs = NULL) {
-  pcs      <- 1:ifelse(!is.null(n_pcs), n_pcs, ncol(data$pca$x) - 1)
-  pca_data <- as.data.frame(data$pca$x[, pcs])
-  pc_names <- colnames(pca_data)
-  variance <- data$pca$percentVar[pcs]
+# EXP PCA linear mixed model
+apply_to_subsets(EXP, pcaLMM, E_DESIGN) |> combine_tables() |> 
+  filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
 
-  results <- lapply(seq_along(pcs), function(i) {
-    pc_name  <- pc_names[i]
-    df       <- cbind(PC = pca_data[[pc_name]], data$colData)
-    message  <- NULL
-    model    <- withCallingHandlers(
-      lmer(update(design, PC ~ .), df),
-      message = function(m) {
-        msg <- conditionMessage(m)
-        message <<- sub(":.*", "", msg)
-        invokeRestart("muffleMessage")
-      }
-    )
-    anova    <- Anova(model, type = 3) |> data.frame()
-    # r2       <- r2_nakagawa(model)
-    # part_r2 <- partR2(model, partvars = c("treatment", "timepoint", "treatment:timepoint"))
-    # print(part_r2)
-    data.table(
-      kingdom = kingdom,
-      source  = source,
-      pc      = pc_name,
-      factor  = rownames(anova),
-      Chisq   = anova$Chisq,
-      df      = anova$Df,
-      P       = anova$Pr..Chisq.,
-      # R2_marg = r2$marginal,
-      # R2_cond = r2$conditional,
-      # R2_part = part_r2$R2,
-      pc_var  = variance[i],
-      message = message
-    )
-  })
-
-  bind_rows(results)[P <= 0.05 & factor != "(Intercept)"]
-}
-
-apply_to_subsets(EXP, pca_summary_subset_lmer, E_DESIGN)  |> combine_tables()
-
-apply_to_subsets(TIME, pca_summary_subset_lmer, T_DESIGN) |> combine_tables()
+# EXP PCA linear mixed model
+apply_to_subsets(TIME, pcaLMM, T_DESIGN) |> combine_tables() |> 
+  filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
 
 ```
 
@@ -666,28 +461,6 @@ Timepoint
 ### PC plots
 
 ```{r pc plots}
-
-#' @title PCA plot
-#' @description Create a PCA plot for a given pair of PCs
-#' @param data PCA data
-#' @param shape A string representing factor to use for the shape aesthetic
-#' @param filename A string representing the filename to save the plot
-#' @return A ggplot object of the PCA plot
-#'
-pcaPlot <- function(data, pcs, shape, filename) {
-  plot <- plotOrd(
-    t(data.frame(t(data$pca$x) * data$pca$percentVar)),
-    # data$pca, 
-    data$colData, 
-    design = "treatment", 
-    shapes = shape, 
-    axes = pcs,
-    alpha = 0.75, 
-    cbPalette = TRUE
-  )
-  ggsave(filename, path = FIGURES_DIR)
-  return(plot)
-}
 
 # EXP FUN root PCs 8 & 9
 pcaPlot(EXP$FUN$root, c(8, 9), "experiment", "PCA_EXP_FUN_root_PC8-9.png")
@@ -720,7 +493,7 @@ EXP BAC root PCs 7 & 8
 ```{r pc loadings}
 
 # PC loadings
-pc_loadings <- function(data, pc, top_n = 10) {
+pcLoadings <- function(data, pc, top_n = 10) {
   df <- cbind(PC = data$pca$x[, pc], data$colData)
   aggregate(PC ~ treatment, df, mean) |> print()
 
@@ -735,23 +508,23 @@ pc_loadings <- function(data, pc, top_n = 10) {
 }
 
 # Fungi root PC8
-pc_loadings(EXP$FUN$root, 8, 10)
+pcLoadings(EXP$FUN$root, 8, 10) |> printTable()
 
 # Fungi root PC8
-pc_loadings(EXP$FUN$root, 9, 10)
+pcLoadings(EXP$FUN$root, 9, 10) |> printTable()
 
 # Fungi soil PC6
-pc_loadings(EXP$FUN$soil, 6, 10)
+pcLoadings(EXP$FUN$soil, 6, 10) |> printTable()
 
 
 # Bacteria root PC7
-pc_loadings(EXP$BAC$root, 7, 10)
+pcLoadings(EXP$BAC$root, 7, 10) |> printTable()
 
 # Bacteria soil PC4
-pc_loadings(EXP$BAC$soil, 4, 10)
+pcLoadings(EXP$BAC$soil, 4, 10) |> printTable()
 
 # Bacteria soil PC8
-pc_loadings(EXP$BAC$soil, 8, 10)
+pcLoadings(EXP$BAC$soil, 8, 10) |> printTable()
 
 ```
 
@@ -759,12 +532,12 @@ Note: Multiply absolute loading by proportion of variance in PC explained by tre
 can then multiply this by proportion of variance of PC to the total community
 
 
-### Differential abundance
+## Differential abundance
 
 ```{r differential abundance}
 
 # Run DESeq model
-deseq_model <- function(data, k, s, design) {
+deseqModel <- function(data, k, s, design) {
   design(data$dds) <- design
   data$dds <- DESeq(data$dds)
   data
@@ -773,68 +546,32 @@ deseq_model <- function(data, k, s, design) {
 e_design <- ~ treatment * experiment + experiment:block
 t_design <- ~ treatment * timepoint
 
-EXP  <- apply_to_subsets(EXP, deseq_model, e_design)
-TIME <- apply_to_subsets(TIME, deseq_model, t_design)
+EXP  <- apply_to_subsets(EXP, deseqModel, e_design)
+TIME <- apply_to_subsets(TIME, deseqModel, t_design)
 
-
-# DESeq differential abundance analysis
-diff_abundance <- function(data, kingdom, source, term) {
-  int_term <- paste0("treatment1.", term, "2")
-  # Extract results for E1 (reference), E2, and interaction
-  res_x1  <- results(data$dds, name = "treatment_1_vs_0")
-  res_x2  <- results(data$dds, contrast = list(c("treatment_1_vs_0", int_term)))
-  res_int <- results(data$dds, name = int_term)
-
-  # Combine into a data.table
-  dt <- data.table(
-    kingdom = kingdom,
-    source = source,
-    ASV = rownames(res_x1),
-    log2FC_X1 = res_x1$log2FoldChange,
-    padj_X1 = res_x1$padj,
-    sig_X1 = p_stars(res_x1$padj),
-    log2FC_X2 = res_x2$log2FoldChange,
-    padj_X2 = res_x2$padj,
-    sig_X2 = p_stars(res_x2$padj),
-    log2FC_inter = res_int$log2FoldChange,
-    padj_inter = res_int$padj,
-    sig_inter = p_stars(res_int$padj),
-    taxa = data$taxData[rownames(res_x1), ]$rank
-  )
-  
-  # Filter for any significant result
-  dt_filt <- dt[
-    complete.cases(padj_X1, padj_X2, padj_inter) &
-    pmin(padj_X1, padj_X2, padj_inter, na.rm = TRUE) < 0.05
-  ]
-
-  # Optionally, sort by log2FC
-  dt_filt <- dt_filt[order(pmax(abs(log2FC_X1), abs(log2FC_X2), na.rm = TRUE), decreasing = TRUE)]
-  
-  return(dt_filt)
-}
+# Differential abundance
 
 exp_da <- split(
-  apply_to_subsets(EXP, diff_abundance, "experiment") |> combine_tables(),
+  apply_to_subsets(EXP, diffAbundance, "experiment") |> combine_tables(),
   f = ~ kingdom
 )
 
 time_da <- split(
-  apply_to_subsets(TIME, diff_abundance, "timepoint") |> combine_tables(),
+  apply_to_subsets(TIME, diffAbundance, "timepoint") |> combine_tables(),
   f = ~ kingdom
 )
 
-exp_da$FUN |> select("taxa") |> table() |> as.data.table()
-time_da$FUN |> select("taxa") |> table() |> as.data.table()
+exp_da$FUN  |> select("taxa") |> table() |> as.data.table() |> printTable()
+time_da$FUN |> select("taxa") |> table() |> as.data.table() |> printTable()
 
-exp_da$FUN[grepl("Dactylonectria", taxa)]
-time_da$FUN[grepl("Pleosporales", taxa)]
+exp_da$FUN[grepl("Dactylonectria", taxa)] |> printTable()
+time_da$FUN[grepl("Pleosporales", taxa)]  |> printTable()
 
 
-exp_da$BAC |> select("taxa") |> table() |> as.data.table()
-time_da$BAC |> select("taxa") |> table() |> as.data.table()
+exp_da$BAC  |> select("taxa") |> table() |> as.data.table() |> printTable()
+time_da$BAC |> select("taxa") |> table() |> as.data.table() |> printTable()
 
-time_da$BAC[grepl("Oxalobacteraceae", taxa)]
+time_da$BAC[grepl("Oxalobacteraceae", taxa)] |> printTable()
 
 ```
 
