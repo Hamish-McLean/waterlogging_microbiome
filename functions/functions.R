@@ -90,6 +90,58 @@ alphaModel <- function(data, kingdom, source, metrics, formula) {
 }
 
 
+#' @title Post-hoc analysis for perm.lmer models
+#' @description Splits data by a grouping variable, runs a simplified
+#'   perm.lmer model on each subset, and calculates aggregate means.
+#' @param data A data.table or data.frame containing the experiment data.
+#' @param metric A string representing the name of the column to be analyzed (e.g., "alpha_diversity").
+#' @param design A formula object for the fixed effects of the simplified model (e.g., `~ treatment`).
+#' @param group_by_var A string representing the column name to split the data by (e.g., "experiment" or "timepoint").
+#' @param nperm The number of permutations to use for perm.lmer.
+#' @return A list containing two elements:
+#'   - `models`: A list of the permutes objects from perm.lmer for each subset.
+#'   - `aggregates`: A list of data.tables with the mean of the metric for each treatment group in each subset.
+alphaPostHoc <- function(data, metric, design, group_by_var, nperm = 1000) {
+
+  # Split the data into a list of data.tables based on the grouping variable
+  split_data <- split(data, by = group_by_var)
+
+  formula <- update(design, metric_rank ~ .)
+
+  # Initialize lists to store the results
+  fitted_models <- list()
+  aggregate_tables <- list()
+
+  # Iterate through each subset of the data
+  for (group_name in names(split_data)) {
+    subset_dt <- split_data[[group_name]][, metric_rank := rank(get(metric))]
+
+    message(paste("Running model for", group_by_var, "=", group_name))
+
+    # Run the perm.lmer model on the subset
+    model_result <- tryCatch({
+      perm.lmer(formula, subset_dt, type = "anova", nperm = nperm)
+    }, error = function(e) {
+      warning(paste("Error running perm.lmer for", group_by_var, "=", group_name, ":", e$message))
+      NULL
+    })
+
+    # Store the model result
+    fitted_models[[group_name]] <- model_result
+
+    # Calculate and store the aggregate means for the subset
+    aggregate_tables[[group_name]] <- aggregate(
+      get(metric) ~ treatment,
+      data = subset_dt,
+      FUN = function(x) c(mean = mean(x, na.rm = TRUE), se = sd(x, na.rm = TRUE) / sqrt(sum(!is.na(x))))
+    )
+  }
+
+  # Return a list of the models and aggregate tables
+  return(list(models = fitted_models, aggregates = aggregate_tables))
+}
+
+
 #' @title Generic iterator function
 #' @description Applies a function to each subset of data
 #' @param data_list A list of data subsets (e.g., FUN or BAC)
@@ -268,26 +320,32 @@ pcaLM <- function(data, kingdom, source, design, n_pcs = NULL) {
   results  <- lapply(seq_along(pcs), function(i) {
     pc_name  <- pc_names[i]
     df       <- cbind(PC = pca_data[[pc_name]], data$colData)
-    model    <- lm(update(design, PC ~ .), df)
-    anova    <- Anova(model, type = 3)
-    anova_df <- anova |> data.frame()
-    total_ss <- sum(anova_df$Sum.Sq)
+    # model    <- lm(update(design, PC ~ .), df)
+    # anova    <- Anova(model, type = 3)
+    anova    <- aov(update(design, PC ~ .), df)
+    anova_df <- summary(anova)[[1]] # anova |> data.frame()
+    total_ss <- sum(anova_df["Sum Sq"])
     data.table(
       kingdom = kingdom,
       source  = source,
       pc      = pc_name,
-      factor  = rownames(anova_df),
-      SS      = anova_df$Sum.Sq,
-      df      = anova_df$Df,
-      F       = anova_df$F.value,
-      P       = anova_df$Pr..F.,
+      factor  = rownames(anova_df) |> trimws(),
+      df      = anova_df["Df"],
+      SS      = anova_df["Sum Sq"],
+      MS      = anova_df["Mean Sq"],
+      F       = anova_df["F value"],
+      P       = anova_df["Pr(>F)"],
       pc_var  = variance[i],
-      var     = anova_df$Sum.Sq / total_ss * 100,
-      var_adj = (anova_df$Sum.Sq / total_ss * 100) * variance[i]
+      var     = anova_df["Sum Sq"] / total_ss * 100,
+      var_adj = (anova_df["Sum Sq"] / total_ss * 100) * variance[i]
     )
   })
 
-  bind_rows(results)
+  # Bind rows and rename columns
+  final_results <- bind_rows(results)
+  colnames(final_results) <- sub("\\..*", "", colnames(final_results))
+
+  return(final_results)
 }
 
 

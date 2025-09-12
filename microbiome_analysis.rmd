@@ -104,10 +104,12 @@ cbPalette   <- c(
 
 # Model designs
 # Timepoint model for E1
-T_DESIGN <- ~ treatment * timepoint + (1 | plot)
+T_DESIGN   <- ~ timepoint + block + treatment + timepoint:treatment + Error(plot)
+T_DESIGN_M <- ~ timepoint * treatment + (1 | plot)
 
 # Experiment model without timepoint 2
-E_DESIGN <- ~ treatment * experiment + (1 | experiment:block)
+E_DESIGN   <- ~ experiment/block + treatment
+E_DESIGN_M <- ~ experiment * treatment + (1 | experiment:block)
 
 ```
 
@@ -201,9 +203,9 @@ cn_time_plots
 
 ```{r copy number models}
 
-exp_cn <- apply_to_subsets(EXP, copyNumberModelLMM, E_DESIGN) |> combine_tables()
+exp_cn <- apply_to_subsets(EXP, copyNumberModelLMM, E_DESIGN_M) |> combine_tables()
 
-time_cn <- apply_to_subsets(TIME, copyNumberModelLMM, T_DESIGN) |> combine_tables()
+time_cn <- apply_to_subsets(TIME, copyNumberModelLMM, T_DESIGN_M) |> combine_tables()
 
 exp_cn[P <= 0.05 & factor != "(Intercept)"] |> printTable("Experiment")
 
@@ -246,8 +248,37 @@ if (!alpha_cache) {
   time_alpha <- readRDS(here(OBJECT_DIR, "time_alpha.rds"))
 }
 
- exp_alpha[p <= 0.05 & factor != "(Intercept)"] |> printTable()
+exp_alpha [p <= 0.05 & factor != "(Intercept)"] |> printTable()
 time_alpha[p <= 0.05 & factor != "(Intercept)"] |> printTable()
+
+```
+
+#### Alpha post-hoc
+
+```{r alpha post-hoc}
+
+# EXP FUN root Simpson: NS, mean(simpson) slightly higher in treated for both
+alphaPostHoc(EXP$FUN$root$alphaData, "simpson", formula(~ treatment + (1 | block)), "experiment")
+
+# EXP FUN soil Chao1: NS, mean(Chao1) slighly higher in E1 trt, lower in E2 trt 
+alphaPostHoc(EXP$FUN$soil$alphaData, "S.chao1", formula(~ treatment + (1 | block)), "experiment")
+
+# EXP BAC soil Simpson: NS, mean(Simpson) slightly lower in treated for both
+alphaPostHoc(EXP$BAC$soil$alphaData, "simpson", formula(~ treatment + (1 | block)), "experiment")
+
+
+
+# TIME FUN soil Simpson: T1 ns, T2 *, higher in treated
+alphaPostHoc(TIME$FUN$soil$alphaData, "simpson", formula(~ treatment + (1 | block)), "timepoint")
+
+# TIME FUN soil Shannon: both ns, both lower in treated
+alphaPostHoc(TIME$FUN$soil$alphaData, "shannon", formula(~ treatment + (1 | block)), "timepoint")
+
+# TIME BAC root Chao1: both ns, 
+alphaPostHoc(TIME$BAC$root$alphaData, "S.chao1", formula(~ treatment + (1 | block)), "timepoint")
+
+# TIME BAC soil Simpson: T1 ns, T2 *, lower in treated
+alphaPostHoc(TIME$BAC$soil$alphaData, "simpson", formula(~ treatment + (1 | block)), "timepoint")
 
 ```
 
@@ -293,92 +324,6 @@ time_alpha_plots <- apply_to_subsets(TIME, plotAlpha, measures, "timepoint") |> 
 
 ggsave("alpha_TIME.png", path = FIGURES_DIR)
 
-
-
-# exp_alpha_plots
-
-# combineAlphaPlot <- function(plots) {
-#   unlist(plots, FALSE)
-# }
-
-
-# Root fungi
-
-# alpha_FUN_root_exp <- plot_alpha(
-#   EXP$FUN$root$countData, EXP$FUN$root$colData,
-#   design = "experiment", colour = "weeks",
-#   measures = measures,
-#   type = "box"
-# ) + scale_colour_manual(values = cbPalette) +
-#   # theme(axis.title.x = element_blank()) +
-#   ggtitle("Fungi: root")
-# alpha_FUN_root_exp
-# ggsave(filename = "alpha_FUN_root_exp.png", path = FIGURES_DIR)
-
-# # Soil fungi
-
-# alpha_FUN_soil_exp <- plot_alpha(
-#   EXP$FUN$soil$countData, EXP$FUN$soil$colData,
-#   design = "experiment", colour = "weeks",
-#   measures = measures,
-#   type = "box"
-# ) + scale_colour_manual(values = cbPalette) +
-#   # theme(axis.title.x = element_blank()) +
-#   ggtitle("Fungi: soil")
-# alpha_FUN_soil_exp
-# ggsave(filename = "alpha_FUN_soil_exp.png", path = FIGURES_DIR)
-
-# # Root bacteria
-
-# alpha_BAC_root_exp <- plot_alpha(
-#   EXP$BAC$root$countData, EXP$BAC$root$colData,
-#   design = "experiment", colour = "weeks",
-#   measures = measures,
-#   type = "box"
-# ) + scale_colour_manual(values = cbPalette) +
-#   # theme(axis.title.x = element_blank()) +
-#   ggtitle("Bacteria: root")
-# alpha_BAC_root_exp
-# ggsave(filename = "alpha_BAC_root_exp.png", path = FIGURES_DIR)
-
-# # Soil bacteria
-
-# alpha_BAC_soil_exp <- plot_alpha(
-#   EXP$BAC$soil$countData, EXP$BAC$soil$colData,
-#   design = "experiment", colour = "weeks",
-#   measures = measures,
-#   type = "box"
-# ) + scale_colour_manual(values = cbPalette) +
-#   # theme(axis.title.x = element_blank()) +
-#   ggtitle("Bacteria: soil")
-# alpha_BAC_soil_exp
-# ggsave(filename = "alpha_BAC_soil_exp.png", path = FIGURES_DIR)
-
-# # alpha_exp_combined <- ggarrange(
-# #   list(
-# #     alpha_FUN_root_exp, alpha_FUN_soil_exp,
-# #     alpha_BAC_root_exp, alpha_BAC_soil_exp
-# #   ),
-# #   ncol = 2, nrow = 2,
-# #   labels = c("Fungi Root", "Fungi Soil", "Bacteria Root", "Bacteria Soil"),
-# #   common.legend = TRUE, legend = "bottom"
-# # )
-
-# alpha_exp_combined <- (
-#   alpha_FUN_root_exp + alpha_FUN_soil_exp
-# ) / (
-#   alpha_BAC_root_exp + alpha_BAC_soil_exp
-# ) +
-#   plot_layout(guides = "collect") & # Collect legends into a single common legend
-#   theme(legend.position = "bottom") # Position the common legend
-
-
-# alpha_exp_combined
-# ggsave(
-#   filename = "alpha_exp_combined.png", plot = alpha_exp_combined, path = FIGURES_DIR
-#   # width = 10, height = 10, units = "cm"
-# )
-
 ```
 
 ## Beta diversity: Bray-Curtis
@@ -390,19 +335,83 @@ Block included as a main effect in the design formula.
 ```{r adonis}
 
 # Designs for ADONIS
-e_design <- vg ~ treatment * experiment + experiment:block
+# e_design <- vg ~ experiment/block * treatment
 
-t_design <- vg ~ treatment * timepoint
+t_design <- vg ~ timepoint * treatment
 
 
 # Apply adonis analysis to each subset of data
-exp_bc  <- apply_to_subsets(EXP, adonisModel, e_design) |> combine_tables()
+exp_bc  <- apply_to_subsets(EXP, adonisModel, update(E_DESIGN, vg ~ .)) |> combine_tables()
 
 time_bc <- apply_to_subsets(TIME, adonisModel, t_design, "plot") |> combine_tables()
 
 exp_bc[P < 0.05]  |> printTable()
 
 time_bc[P < 0.05] |> printTable()
+
+```
+
+#### Post-hoc analysis
+
+```{r adonis post-hoc}
+
+#' @title Post-hoc analysis for adonis2 interaction terms
+#' @description Splits data by a grouping variable and runs a simplified
+#'   adonis2 model on each subset to investigate a significant interaction.
+#' @param data A data.frame or data.table containing the experiment metadata.
+#' @param counts A matrix or data.frame of raw or normalized counts (e.g., from DESeq2).
+#' @param simplified_formula A formula object for the fixed effects of the simplified model (e.g., `~ treatment`).
+#' @param group_by_var A string representing the column name to split the data by (e.g., "experiment" or "timepoint").
+#' @param nperm The number of permutations to use for adonis2.
+#' @return A list of the adonis2 results (data.tables) for each subset.
+#' 
+adonisPosthoc <- function(data, counts, simplified_formula, group_by_var, nperm = 1000) {
+
+  # Split the data into a list of data.tables based on the grouping variable
+  split_data <- split(data, data[[group_by_var]])
+
+  # Initialize a list to store the results
+  adonis_results <- list()
+
+  # Iterate through each subset of the data
+  for (group_name in names(split_data)) {
+    subset_data <- split_data[[group_name]]
+
+    # Subset the counts matrix to match the current metadata subset
+    subset_counts <- counts[, rownames(subset_data)]
+
+    # Calculate Bray-Curtis distances for the subset
+    bray_curtis_dist <- vegan::vegdist(t(subset_counts), method = "bray")
+
+    message(paste("Running adonis2 for", group_by_var, "=", group_name))
+
+    # Define the full formula for the subset model
+    # 'paste()' constructs new formula string like "bray_curtis_dist ~ treatment"
+    full_formula_str <- paste("bray_curtis_dist", as.character(simplified_formula)[2], sep = " ")
+    full_formula <- as.formula(full_formula_str)
+
+    # Run adonis2 on the subset
+    model_result <- tryCatch({
+      vegan::adonis2(
+        full_formula,
+        data = subset_data,
+        permutations = nperm,
+        by = "terms"
+      )
+    }, error = function(e) {
+      warning(paste("Error running adonis2 for", group_by_var, "=", group_name, ":", e$message))
+      NULL
+    })
+
+    # Convert the adonis2 output to a data.frame for easier handling and store it
+    if (!is.null(model_result)) {
+      adonis_results[[group_name]] <- as.data.frame(model_result)
+    }
+  }
+
+  # Return the list of adonis2 results
+  return(adonis_results)
+}
 
 ```
 
@@ -468,24 +477,24 @@ lapply(unlist(TIME, FALSE), function(x) {
 }) |> as.data.table() |> mutate("PC" = 1:20) |> printTable()
 
 
-e_design <- ~ treatment * experiment + experiment:block
-t_design <- ~ treatment * timepoint
+# e_design <- ~ treatment * experiment + experiment:block
+# t_design <- ~ treatment * timepoint
 
 # EXP PCA linear model
-apply_to_subsets(EXP, pcaLM, e_design) |> combine_tables() |> 
+apply_to_subsets(EXP, pcaLM, E_DESIGN) |> combine_tables() |> 
   filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
 
 # TIME PCA linear model
-apply_to_subsets(TIME, pcaLM, t_design) |> combine_tables() |> 
+apply_to_subsets(TIME, pcaLM, T_DESIGN) |> combine_tables() |> 
   filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
 
 
 # EXP PCA linear mixed model
-apply_to_subsets(EXP, pcaLMM, E_DESIGN) |> combine_tables() |> 
+apply_to_subsets(EXP, pcaLMM, E_DESIGN_M) |> combine_tables() |> 
   filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
 
 # EXP PCA linear mixed model
-apply_to_subsets(TIME, pcaLMM, T_DESIGN) |> combine_tables() |> 
+apply_to_subsets(TIME, pcaLMM, T_DESIGN_M) |> combine_tables() |> 
   filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
 
 ```
@@ -598,11 +607,11 @@ deseqModel <- function(data, k, s, design) {
   data
 }
 
-e_design <- ~ treatment * experiment + experiment:block
-t_design <- ~ treatment * timepoint
+# e_design <- ~ treatment * experiment + experiment:block
+# t_design <- ~ treatment * timepoint
 
-EXP  <- apply_to_subsets(EXP, deseqModel, e_design)
-TIME <- apply_to_subsets(TIME, deseqModel, t_design)
+EXP  <- apply_to_subsets(EXP, deseqModel, E_DESIGN)
+TIME <- apply_to_subsets(TIME, deseqModel, T_DESIGN)
 
 # Differential abundance
 
