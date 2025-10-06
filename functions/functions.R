@@ -234,7 +234,7 @@ copyNumberModelLMM <- function(data, kingdom, source, design) {
 #' @title DESeq differential abundance analysis
 #'
 diffAbundance <- function(data, kingdom, source, term) {
-  int_term <- paste0("treatment1.", term, "2")
+  int_term <- paste0(term, "2.treatment1")
   # Extract results for E1 (reference), E2, and interaction
   res_x1  <- results(data$dds, name = "treatment_1_vs_0")
   res_x2  <- results(data$dds, contrast = list(c("treatment_1_vs_0", int_term)))
@@ -265,6 +265,34 @@ diffAbundance <- function(data, kingdom, source, term) {
 
   # Optionally, sort by log2FC
   dt_filt <- dt_filt[order(pmax(abs(log2FC_X1), abs(log2FC_X2), na.rm = TRUE), decreasing = TRUE)]
+  
+  return(dt_filt)
+}
+
+
+#' @title DESeq differential abundance analysis
+#'
+diffAbundanceOverall <- function(data, kingdom, source, term) {
+  # Extract results for E1 (reference), E2, and interaction
+  res <- results(data$dds, name = "treatment_1_vs_0")
+
+  # Combine into a data.table
+  dt <- data.table(
+    kingdom = kingdom,
+    source = source,
+    ASV = rownames(res),
+    log2FC = res$log2FoldChange,
+    correlation = ifelse(res$log2FoldChange > 0, "positive", "negative"),
+    padj = res$padj,
+    sig = p_stars(res$padj),
+    taxa = data$taxData[rownames(res), ]$rank
+  )
+  
+  # Filter for any significant result
+  dt_filt <- dt[complete.cases(padj) & padj < 0.05]
+
+  # Optionally, sort by log2FC
+  dt_filt <- dt_filt[order(abs(log2FC), decreasing = TRUE)]
   
   return(dt_filt)
 }

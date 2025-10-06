@@ -57,6 +57,7 @@ library(patchwork)
 library(performance)
 library(permutes)
 library(see)
+library(tidyr)
 library(vegan)
 library(viridis)
 
@@ -108,7 +109,7 @@ T_DESIGN   <- ~ timepoint + block + treatment + timepoint:treatment + Error(plot
 T_DESIGN_M <- ~ timepoint * treatment + (1 | plot)
 
 # Experiment model without timepoint 2
-E_DESIGN   <- ~ experiment/block + treatment
+E_DESIGN   <- ~ experiment/block + treatment + experiment:treatment
 E_DESIGN_M <- ~ experiment * treatment + (1 | experiment:block)
 
 ```
@@ -607,23 +608,43 @@ deseqModel <- function(data, k, s, design) {
   data
 }
 
-# e_design <- ~ treatment * experiment + experiment:block
-# t_design <- ~ treatment * timepoint
+# Treatment effect with interaction
 
-EXP  <- apply_to_subsets(EXP, deseqModel, E_DESIGN)
-TIME <- apply_to_subsets(TIME, deseqModel, T_DESIGN)
+# e_design <- ~ experiment/block + treatment + experiment:treatment
+# t_design <- ~ timepoint + block + treatment + timepoint:treatment
+
+# EXP  <- apply_to_subsets(EXP, deseqModel, e_design)
+# TIME <- apply_to_subsets(TIME, deseqModel, t_design)
+
+# resultsNames(EXP$FUN$soil$dds)
+
+
+# Overall treatment effect
+
+e_design <- ~ experiment/block  + treatment
+t_design <- ~ timepoint + block + treatment
+
+EXP  <- apply_to_subsets(EXP,  deseqModel, e_design)
+TIME <- apply_to_subsets(TIME, deseqModel, t_design)
+
+# resultsNames(EXP$FUN$soil$dds)
+
 
 # Differential abundance
 
-exp_da <- split(
-  apply_to_subsets(EXP, diffAbundance, "experiment") |> combine_tables(),
-  f = ~ kingdom
-)
+exp_da <- apply_to_subsets(EXP, diffAbundanceOverall, "experiment")
+time_da <- apply_to_subsets(TIME, diffAbundanceOverall, "timepoint")
 
-time_da <- split(
-  apply_to_subsets(TIME, diffAbundance, "timepoint") |> combine_tables(),
-  f = ~ kingdom
-)
+
+# exp_da <- split(
+#   apply_to_subsets(EXP, diffAbundanceOverall, "experiment") |> combine_tables(),
+#   f = ~ kingdom
+# )
+
+# time_da <- split(
+#   apply_to_subsets(TIME, diffAbundanceOverall, "timepoint") |> combine_tables(),
+#   f = ~ kingdom
+# )
 
 ```
 
@@ -632,13 +653,13 @@ time_da <- split(
 #### EXP: FUN
 
 ```{r}
-exp_da$FUN |> printTable()
+exp_da$FUN |> combine_tables() |> printTable()
 ```
 
 #### EXP: BAC
 
 ```{r}
-exp_da$BAC |> printTable()
+exp_da$BAC |> combine_tables() |> printTable()
 ```
 
 #### TIME: FUN
@@ -674,3 +695,128 @@ time_da$BAC[grepl("Oxalobacteraceae", taxa)] |> printTable()
 The fungal taxa with multiple occurences (but different ASVs) had wildly different
 results.
 There were fewer bacteria with multiple occurences, but the results were more consistant.
+
+## Functional analysis
+
+### FUNGuilds
+
+```{r FUNGuilds}
+
+# Load FUNGuilds data
+funguilds <- readRDS(here(OBJECT_DIR, "FUNGuilds.rds"))
+
+mergeFunguilds <- function(data, guilds) {
+  merge(data,  guilds, by.x = "ASV", by.y = "OTU")[, c(
+    "Taxonomy", "guid", "mbNumber", "taxonomicLevel", "notes", "citationSource"
+  ) := NULL]
+}
+
+exp_da_FUN  <- lapply(exp_da$FUN,  function(d) mergeFunguilds(d, funguilds))
+time_da_FUN <- lapply(time_da$FUN, function(d) mergeFunguilds(d, funguilds))
+
+
+# des_funguilds_filt <- function(data) {
+#   # filt <- data[padj_X1 < 0.05 & padj_X2 < 0.05 & padj_inter > 0.05]
+#   filt <- data#[!is.na(confidenceRanking) & confidenceRanking != "Possible"]
+#   # filt[, c("log2FC_inter", "padj_inter", "sig_inter") := NULL]
+#   filt[, correlation := ifelse(log2FC > 0, "positive", "negative")]
+#   setorder(filt, log2FC)
+#   split(filt, ~ source + correlation)
+# }
+
+# des_funguilds_filt(exp_da_FUN)
+# des_funguilds_filt(time_da_FUN)
+
+summariseFunguilds <- function(data) {
+  data_clean <- data[!is.na(confidenceRanking) & confidenceRanking != "Possible"]
+
+  # primary <- copy(data_clean)
+  # primary[, primary := {
+  #   m <- regexpr("\\|(.+?)\\|", guild)
+  #   res <- regmatches(guild, m)
+  #   res[which(m == -1)] <- NA
+  #   res
+  # }]
+  # primary[, primary := gsub("\\|", "", primary)]
+  # primary <- primary[!is.na(primary)]
+  # primary_summary <- primary[, .(
+  #   count = .N
+  # ), by = primary][order(-count)]
+
+  all <- copy(data_clean)
+  all[, guild := gsub("\\|", "", guild)]
+  split_list <- strsplit(all$guild, split = "-")
+  indices <- rep(1:nrow(all), sapply(split_list, length))
+  all_split <- all[indices]
+  all_split[, guild := unlist(split_list)]
+  all_summary <- all_split[, .(
+    count = .N
+    # proportion = .N / nrow(all_split),
+  ), by = guild][order(-count)]
+
+  # return(list(
+  #   primary_guild_summary = primary_summary,
+  #   all_guilds_summary = all_summary
+  # ))
+  all_summary
+}
+
+summariseFunguilds(exp_da_FUN$root[correlation == "positive"])
+
+applyFunguilds <- function(data) {
+  Map(function(source, dt) {
+    split_data <- split(dt, f = ~ correlation)
+
+    res <- lapply(names(split_data), function(cor) {
+      guilds <- summariseFunguilds(split_data[[cor]])
+      setnames(guilds, "count", cor)
+      guilds
+    })
+
+    Reduce(function(x, y) merge(x, y, by = "guild", all = TRUE), res)
+
+  }, names(data), data)
+}
+
+applyFunguilds(exp_da_FUN)
+applyFunguilds(time_da_FUN)
+
+
+```
+
+### FAPROTAX
+
+```{r FAPROTAX}
+
+source(here("functional_analysis", "faprotax.R"))
+
+fapro_dir <- here("/home/hmclean/apps/faprotax/FAPROTAX_1.2.12/")
+
+apply_faprotaxit <- function(data, type) {
+  split_data <- lapply(data, function(d) split(d, f = ~ correlation))
+  
+  Map(function(source, dt) {
+    res <- lapply(names(dt), function(cor) {
+      dt_subset <- dt[[cor]]
+      fapro <- faprotaxit(
+        BAC$taxData[dt_subset$ASV, ], 
+        here("functional_analysis", paste("BAC", type, source, cor, "fapro.txt", sep = "_")),
+        fapro_dir
+      )
+      setnames(fapro, "total_otus", cor)
+      return(fapro)
+    })
+    Reduce(function(x, y) merge(x, y, by = "function_group", all = TRUE), res)
+  }, names(split_data), split_data)
+}
+
+# apply_faprotaxit(exp_da$BAC, "exp")
+# apply_faprotaxit(time_da$BAC, "time")
+
+
+faprotax <- list(
+  EXP = apply_faprotaxit(exp_da$BAC, "exp"),
+  TIME = apply_faprotaxit(time_da$BAC, "time")
+)
+
+```
