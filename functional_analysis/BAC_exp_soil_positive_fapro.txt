@@ -1,5 +1,5 @@
 # Report for collapsed table: 
-# Collapsed table generated on: 2025.10.06 16:21:05
+# Collapsed table generated on: 2025.10.07 12:02:52
 # Original table: faprotaxa
 # Details:
 #  Original classical table contained 11 rows and 1 columns
