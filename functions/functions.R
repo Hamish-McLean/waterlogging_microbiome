@@ -195,8 +195,30 @@ calculatePCA <- function(data, name, source, n_pcs = NULL) {
 #' @param data_list A nested list of tables
 #' @return A single table of data
 #' 
-combine_tables <- function(data_list) {
+combineTables <- function(data_list) {
   unlist(data_list, recursive = FALSE) |> rbindlist()
+}
+
+
+#' @title Fit LM to copy number data run ANOVA
+#' @param data Data object with copy number data
+#' 
+copyNumberModelLM <- function(data, kingdom, source, design) {
+  anova    <- aov(update(design, copy_number ~ .), data$colData)
+  anova_df <- summary(anova)[[1]] # anova |> data.frame()
+  total_ss <- sum(anova_df[["Sum Sq"]])
+  data.table(
+    kingdom = kingdom,
+    source  = source,
+    factor  = rownames(anova_df) |> trimws(),
+    df      = anova_df[["Df"]],
+    SS      = anova_df[["Sum Sq"]],
+    MS      = anova_df[["Mean Sq"]],
+    F       = anova_df[["F value"]],
+    P       = anova_df[["Pr(>F)"]],
+    stars   = p_stars(anova_df[["Pr(>F)"]]),
+    var     = anova_df[["Sum Sq"]] / total_ss * 100
+  )
 }
 
 
@@ -213,7 +235,7 @@ copyNumberModelLMM <- function(data, kingdom, source, design) {
     }
   )
   r2 <- r2_nakagawa(model, verbose = FALSE)
-  # part_r2 <- partR2(model, data = data$colData, partvars = c("treatment", "experiment", "treatment:experiment"))
+  # part_r2 <- partR2(model, data = data$colData, partvars = c("experiment", "treatment"))
   # print(part_r2)
   results <- Anova(model, type = 3) |> data.frame()
   data.table(
@@ -339,7 +361,7 @@ p_stars <- function(p) {
 
 #' @title PCA linear model anova
 #' 
-pcaLM <- function(data, kingdom, source, design, n_pcs = NULL) {
+pcaLM <- function(data, kingdom, source, design, type, n_pcs = NULL) {
   pcs      <- 1:ifelse(!is.null(n_pcs), n_pcs, ncol(data$pca$x) - 1)
   pca_data <- as.data.frame(data$pca$x[, pcs])
   variance <- data$pca$percentVar[pcs]
@@ -347,25 +369,34 @@ pcaLM <- function(data, kingdom, source, design, n_pcs = NULL) {
 
   results  <- lapply(seq_along(pcs), function(i) {
     pc_name  <- pc_names[i]
-    df       <- cbind(PC = pca_data[[pc_name]], data$colData)
+    pc_dat   <- pca_data[[pc_name]]
+    df       <- cbind(PC = pc_dat, data$colData)
     # model    <- lm(update(design, PC ~ .), df)
     # anova    <- Anova(model, type = 3)
     anova    <- aov(update(design, PC ~ .), df)
-    anova_df <- summary(anova)[[1]] # anova |> data.frame()
-    total_ss <- sum(anova_df["Sum Sq"])
+    anova_df <- if (type == "experiment") {
+      summary(anova)[[1]] # anova |> data.frame()
+    } else {
+      bind_rows(
+        summary(anova)[["Error: plot"]][[1]], 
+        summary(anova)[["Error: Within"]][[1]]
+      )
+    }
+    # total_ss <- sum(anova_df["Sum Sq"])
+    total_ss <- sum((pc_dat - mean(pc_dat))^2)
     data.table(
       kingdom = kingdom,
       source  = source,
       pc      = pc_name,
       factor  = rownames(anova_df) |> trimws(),
-      df      = anova_df["Df"],
-      SS      = anova_df["Sum Sq"],
-      MS      = anova_df["Mean Sq"],
-      F       = anova_df["F value"],
-      P       = anova_df["Pr(>F)"],
+      df      = anova_df[["Df"]],
+      SS      = anova_df[["Sum Sq"]],
+      MS      = anova_df[["Mean Sq"]],
+      F       = anova_df[["F value"]],
+      P       = anova_df[["Pr(>F)"]],
       pc_var  = variance[i],
-      var     = anova_df["Sum Sq"] / total_ss * 100,
-      var_adj = (anova_df["Sum Sq"] / total_ss * 100) * variance[i]
+      var     = anova_df[["Sum Sq"]] / total_ss * 100,
+      var_adj = (anova_df[["Sum Sq"]] / total_ss * 100) * variance[i]
     )
   })
 
