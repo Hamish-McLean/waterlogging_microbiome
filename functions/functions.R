@@ -90,6 +90,90 @@ alphaModel <- function(data, kingdom, source, metrics, formula) {
 }
 
 
+#' @title Analyze alpha diversity
+#' @description Perform alpha diversity analysis on each subset of data
+#' @param data A list containing countData and colData
+#' @param kingdom A string representing the kingdom of the data (e.g., "Fungi" or "Bacteria")
+#' @param source A string representing the source of the data (e.g., "root" or "soil")
+#' @param metrics A vector of alpha diversity metrics to analyze
+#' @param formula A formula for the model to use in the analysis
+#' @return A list with the alpha diversity results
+#'
+alphaLM <- function(data, kingdom, source, metrics, formula) {
+  cat(paste0("\nAnalyzing alpha diversity for ", kingdom, ": ", source, "\n"))
+
+  # Run alpha diversity analysis for each metric
+  anova_results <- list()
+  for (met in metrics) {
+
+    # Ensure the metric column exists
+    if (!met %in% names(data$alphaData)) {
+      warning("Metric '", met, "' not found in alpha data for ", kingdom, ": ", source)
+      next
+    }
+    
+    temp_dt <- data.table::copy(data$alphaData)
+    temp_dt[, model_metric := rank(get(met))] # Rank of metric
+    # formula <- update(formula, model_metric ~ .)
+    # formula <- update(formula, as.formula(paste0("rank(", met, ") ~ .")))
+
+    rhs_terms <- attr(terms(formula), "term.labels")
+    new_formula <- reformulate(
+      termlabels = rhs_terms,
+      response = "model_metric" #paste0("rank(", met, ")")
+    )
+
+    # Create environment with data for robust evaluation
+    # f_env <- new.env(parent = environment(new_formula))
+    # f_env$temp_dt <- temp_dt
+    # environment(new_formula) <- f_env
+
+    # Run the permutation model
+    # return(aovp(new_formula, data = temp_dt, seqs = TRUE))
+
+    res <- tryCatch({
+      aovp(update(new_formula, model_metric ~ .), data = temp_dt, seqs = TRUE)
+    }, error = function(e) {
+      warning("Error running aovp for ", kingdom, ":", source, ", metric ", met, ": ", e$message)
+      NULL # Return NULL on error
+    })
+    # return(summary(res))
+    if (!is.null(res)) {
+      anova_df <- if (length(res) > 3) { # length = 3 for repeat measures anova
+        summary(res)[[1]] |> as.data.frame()
+      } else {
+        bind_rows(
+          summary(res)[["Error: plot"]][[1]] |> as.data.frame(), 
+          summary(res)[["Error: Within"]][[1]] |> as.data.frame()
+        )
+      }
+      anova_df$metric <- met
+      anova_df$factor <- rownames(anova_df) |> trimws()
+      anova_df$total_ss <- sum((temp_dt$model_metric - mean(temp_dt$model_metric))^2)
+      anova_results[[met]] <- anova_df
+    } else {
+      anova_results[[met]] <- "Error"
+      warning("ANOVA for ", kingdom, ":", source, ", metric ", met, " failed.")
+    }
+  }
+  results <- rbindlist(anova_results)
+  # return(results)
+  data.table(
+    kingdom = kingdom,
+    source  = source,
+    metric  = results$metric,
+    factor  = results$factor,
+    df      = results[["Df"]],
+    SS      = results[["R Sum Sq"]],
+    MS      = results[["R Mean Sq"]],
+    Iter    = results[["Iter"]],
+    p       = results[["Pr(Prob)"]],
+    stars   = p_stars(results[["Pr(Prob)"]]),
+    var     = results[["R Sum Sq"]] / results$total_ss * 100
+  )
+}
+
+
 #' @title Post-hoc analysis for perm.lmer models
 #' @description Splits data by a grouping variable, runs a simplified
 #'   perm.lmer model on each subset, and calculates aggregate means.

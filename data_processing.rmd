@@ -131,6 +131,10 @@ colnames(BAC$countData) <- gsub("\\.raw$", "", colnames(BAC$countData))
 FUN$colData$exp_tp <- paste(FUN$colData$experiment, FUN$colData$timepoint, sep = "|")
 BAC$colData$exp_tp <- paste(BAC$colData$experiment, BAC$colData$timepoint, sep = "|")
 
+# Add a new column to colData that combines experiment and block
+FUN$colData$e_block <- paste(FUN$colData$experiment, FUN$colData$block, sep = "_")
+BAC$colData$e_block <- paste(BAC$colData$experiment, BAC$colData$block, sep = "_")
+
 # Convert all columns to factors
 FUN$colData[] <- lapply(FUN$colData, as.factor)
 BAC$colData[] <- lapply(BAC$colData, as.factor)

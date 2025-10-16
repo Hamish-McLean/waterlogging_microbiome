@@ -176,7 +176,9 @@ ggsave(filename = "CN_TIME.png", path = FIGURES_DIR)
 
 ### Copy number models
 
-```{r copy number models}
+#### Linear mixed effects models
+
+```{r copy number mixed models, eval = FALSE}
 
 exp_cn  <- apply_to_subsets(EXP, copyNumberModelLMM, E_DESIGN_M) |> combineTables()
 time_cn <- apply_to_subsets(TIME, copyNumberModelLMM, T_DESIGN_M) |> combineTables()
@@ -191,8 +193,12 @@ time_cn |> printTable("Timepoint")
 
 # lmer(update(E_DESIGN_M, copy_number ~ .), EXP$FUN$soil$colData) |> residuals() |> qqnorm()
 
+```
 
-# # Linear models
+#### Linear models
+
+```{r copy number models}
+
 # apply_to_subsets(EXP, copyNumberModelLM, E_DESIGN) |> combineTables()
 
 # apply_to_subsets(TIME, copyNumberModelLM, T_DESIGN) |> combineTables()
@@ -222,7 +228,7 @@ genericAnova <- function(data, kingdom, source, design) {
   )
 }
 
-exp_cn_lm <- apply_to_subsets(EXP, genericAnova, update(E_DESIGN, log10_copy_number ~ .)) |> combineTables()
+exp_cn_lm <- apply_to_subsets(EXP, genericAnova, update(E_DESIGN, log10(copy_number) ~ .)) |> combineTables()
 
 exp_cn_lm |> printTable("Experiment")
 
@@ -230,7 +236,7 @@ exp_cn_lm |> printTable("Experiment")
 
 
 timepointAnova <- function(data, kingdom, source, design) {
-  anova     <- aov(update(design, log10_copy_number ~ .), data$colData)
+  anova     <- aov(update(design, log10(copy_number)  ~ .), data$colData)
   plot_df   <- summary(anova)[["Error: plot"]][[1]]
   # plot_ss   <- sum(plot_df[["Sum Sq"]])
   # plot_df$var <- plot_df[["Sum Sq"]] / plot_ss * 100
@@ -374,7 +380,7 @@ Add alpha diversity idices to data objects.
 
 ```{r calculate alpha diversity}
 
-EXP <- apply_to_subsets(EXP, calculateAlpha)
+EXP  <- apply_to_subsets(EXP, calculateAlpha)
 TIME <- apply_to_subsets(TIME, calculateAlpha)
 
 ```
@@ -384,7 +390,7 @@ TIME <- apply_to_subsets(TIME, calculateAlpha)
 `perm.lmer` runs a permutation test for mixed-effects models.
 This model takes a long time to run, so results are cached.
 
-```{r alpha diversity analysis}
+```{r alpha diversity analysis, eval = FALSE}
 
 # These models are very slow, only run to update the cached results
 if (!alpha_cache) {
@@ -410,9 +416,9 @@ time_alpha |> printTable()
 
 ```
 
-#### Alpha post-hoc
+#### Alpha post-hoc (LMM)
 
-```{r alpha post-hoc}
+```{r alpha post-hoc LMM, eval = FALSE}
 
 # EXP FUN root Simpson: NS, mean(simpson) slightly higher in treated for both
 alphaPostHoc(EXP$FUN$root$alphaData, "simpson", formula(~ treatment + (1 | block)), "experiment")
@@ -436,6 +442,301 @@ alphaPostHoc(TIME$BAC$root$alphaData, "S.chao1", formula(~ treatment + (1 | bloc
 
 # TIME BAC soil Simpson: T1 ns, T2 *, lower in treated
 alphaPostHoc(TIME$BAC$soil$alphaData, "simpson", formula(~ treatment + (1 | block)), "timepoint")
+
+```
+
+### Alpha diversity linear models
+
+```{r alpha LM}
+
+metrics <- c("S.chao1", "shannon", "simpson")
+
+# alphaLM(EXP$FUN$soil, "FUN", "soil", metrics, E_DESIGN)
+
+exp_alpha <- apply_to_subsets(EXP, alphaLM, metrics, E_DESIGN)
+
+exp_alpha |> combineTables() |> printTable("Experiment")
+
+# alphaLM(TIME$FUN$soil, "FUN", "soil", metrics, T_DESIGN)
+
+singleAlphaLM <- function(data, kingdom, source, metric, design) {
+  formula <- update(design, as.formula(paste0("rank(", metric, ") ~ .")))
+  anova <- aovp(formula, data, seqs = TRUE)
+  anova_df <- bind_rows(
+    summary(anova)[["Error: plot"]][[1]] |> as.data.frame(), 
+    summary(anova)[["Error: Within"]][[1]] |> as.data.frame()
+  )
+  metric_rank <- rank(data[[metric]])
+  anova_df$met <- metric
+  anova_df$factor <- rownames(anova_df) |> trimws()
+  anova_df$total_ss <- sum((metric_rank - mean(metric_rank))^2)
+  data.table(
+    kingdom = kingdom,
+    source  = source,
+    metric  = anova_df$met,
+    factor  = anova_df$factor,
+    df      = anova_df[["Df"]],
+    SS      = anova_df[["R Sum Sq"]],
+    MS      = anova_df[["R Mean Sq"]],
+    Iter    = anova_df[["Iter"]],
+    p       = anova_df[["Pr(Exact)"]],
+    stars   = p_stars(anova_df[["Pr(Exact)"]]),
+    var     = anova_df[["R Sum Sq"]] / anova_df$total_ss * 100
+  )
+}
+
+# singleAlphaLM(TIME$FUN$soil$alphaData, "FUN", "soil", "S.chao1", T_DESIGN)
+
+time_alpha <- list(
+  FUN = list(
+    root = bind_rows(
+      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "root", "S.chao1", T_DESIGN),
+      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "root", "shannon", T_DESIGN),
+      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "root", "simpson", T_DESIGN)
+    ),
+    soil = bind_rows(
+      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "soil", "S.chao1", T_DESIGN),
+      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "soil", "shannon", T_DESIGN),
+      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "soil", "simpson", T_DESIGN)
+    )
+  ),
+  BAC = list(
+    root = bind_rows(
+      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "root", "S.chao1", T_DESIGN),
+      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "root", "shannon", T_DESIGN),
+      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "root", "simpson", T_DESIGN)
+    ),
+    soil = bind_rows(
+      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "soil", "S.chao1", T_DESIGN),
+      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "soil", "shannon", T_DESIGN),
+      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "soil", "simpson", T_DESIGN)
+    )
+  )
+)
+
+time_alpha |> combineTables() |> printTable("Timepoint")
+
+
+# Summary tables
+
+summariseAlpha <- function(data) {
+  combined_data <- combineTables(data)
+  combined_data$factor <- factor(combined_data$factor, levels = unique(combined_data$factor))
+  dt <- dcast(
+    combined_data,
+    kingdom + factor + df ~ source + metric,
+    value.var = c("var", "stars")
+  )
+  id_cols <- c("kingdom", "factor", "df")
+  all_cols <- setdiff(names(dt), id_cols)
+  base_cols <- unique(sub("^(var|stars)_", "", all_cols))
+  final_cols <- c(
+    id_cols,
+    as.vector(sapply(base_cols, function(x) c(paste0("var_", x), paste0("stars_", x))))
+  )
+  setcolorder(dt, final_cols)
+  dt
+}
+
+summariseAlpha(exp_alpha)  |> printTable("Experiment")
+summariseAlpha(time_alpha) |> printTable("Timepoint")
+
+# combineTables(exp_alpha)$factor |> as.ordered()
+
+
+# Post hoc analysis
+
+# Bacteria soil Simpson
+# dat <- EXP$BAC$soil$alphaData
+# dat$simpson_rank <- rank(dat$simpson)
+# ## E1
+# dat[experiment == 1]$simpson_rank |> mean()
+# ##E2
+# dat[experiment == 2]$simpson_rank |> mean()
+
+# emmeans(
+#   aovp(update(E_DESIGN, rank(simpson) ~ .), dat, seqs = TRUE)
+# )
+
+# pairwise.wilcox.test(
+#   x = dat$simpson_rank, # Your response variable
+#   g = dat$experiment,       # Your grouping factor
+#   p.adjust.method = "bonferroni"
+# )
+
+# anovaResults <- function(data, k, s, design) {
+#   anova <- aovp(update(design, measure ~ .))
+#   anova_df <- if (length(anova) > 3) { # length = 3 for repeat measures anova
+#     summary(anova)[[1]] # anova |> data.frame()
+#   } else {
+#     bind_rows(
+#       summary(anova)[["Error: plot"]][[1]], 
+#       summary(anova)[["Error: Within"]][[1]]
+#     )
+#   }
+#   # total_ss <- sum(anova_df["Sum Sq"])
+#   total_ss <- sum((pc_dat - mean(pc_dat))^2)
+#   data.table(
+#     kingdom = kingdom,
+#     source  = source,
+#     pc      = pc_name,
+#     factor  = rownames(anova_df) |> trimws(),
+#     df      = anova_df[["Df"]],
+#     SS      = anova_df[["Sum Sq"]],
+#     MS      = anova_df[["Mean Sq"]],
+#     F       = anova_df[["F value"]],
+#     P       = anova_df[["Pr(>F)"]],
+#     var     = anova_df[["Sum Sq"]] / total_ss * 100
+#   )
+# }
+
+```
+
+#### Alpha diversity post-hoc (linear models)
+
+```{r alpha post-hoc (LM)}
+
+# Compare means between experiments
+
+alphaPostHoc <- function(data, kingdom, source, metrics, factor, lvl) {
+  dt  <- data$alphaData
+  for (met in metrics) dt[, (paste0(met, "_rank")) := rank(get(met))]
+  ranks <- sapply(metrics, function(met) paste0(met, "_rank"))
+  res <- data.table(
+    Kingdom = kingdom,
+    Source  = source,
+    Metric  = metrics
+  )
+  res[, (paste(factor, lvl[1])) := sapply(ranks, function(m) mean(dt[get(factor) == lvl[1]][[m]]))]
+  res[, (paste(factor, lvl[2])) := sapply(ranks, function(m) mean(dt[get(factor) == lvl[2]][[m]]))]
+  res[, diff := get(paste(factor, lvl[2])) - get(paste(factor, lvl[1]))]
+}
+
+# Experiment
+apply_to_subsets(EXP, alphaPostHoc, metrics, "experiment", c(1, 2)) |> combineTables() |> printTable("Experiment")
+apply_to_subsets(EXP, alphaPostHoc, metrics, "treatment", c(0, 1)) |> combineTables() |> printTable("Experiment: treatment")
+
+# Timepoint
+apply_to_subsets(TIME, alphaPostHoc, metrics, "timepoint", c(1, 2)) |> combineTables() |> printTable("Timepoint")
+apply_to_subsets(TIME, alphaPostHoc, metrics, "treatment", c(0, 1)) |> combineTables() |> printTable("Timepoint: treatment")
+
+
+# Interactions
+
+alphaEach <- function(data, kingdom, source, metrics, design, type) {
+  cat(paste0("\nAnalyzing alpha diversity for ", kingdom, ": ", source, "\n"))
+
+  # Subset data
+  data_subsets <- split(data$alphaData, as.formula(paste("~", type)))
+
+  # Run alpha diversity analysis for each metric
+  anova_results <- list()
+
+  for (met in metrics) {
+    formula <- update(design, as.formula(paste0("rank(", met, ") ~ .")))
+
+    # anova <- lapply(data_subsets, function(d) aovp(formula, data = d, seqs = TRUE))
+    df_list <- lapply(data_subsets, function(d) {
+      anova <- aovp(formula, data = d, seqs = TRUE)
+      df <- summary(anova)[[1]] |> as.data.frame()
+      setDT(df, keep.rownames = "factor")
+      df[, total_ss := sum((rank(d[[met]]) - mean(rank(d[[met]])))^2)]
+    })
+
+    anova_df <- rbindlist(df_list, idcol = type)
+    anova_df$metric <- met
+    
+    anova_results[[met]] <- anova_df
+  }
+
+  results <- rbindlist(anova_results)
+
+  results[, var := get("R Sum Sq") / total_ss * 100]
+  # return(results)
+  data.table(
+    kingdom = kingdom,
+    source  = source,
+    type    = results[[type]],
+    metric  = results$metric,
+    factor  = results$factor,
+    df      = results[["Df"]],
+    SS      = results[["R Sum Sq"]],
+    MS      = results[["R Mean Sq"]],
+    p       = results[["Pr(Exact)"]],
+    stars   = p_stars(results[["Pr(Exact)"]]),
+    var     = results[["R Sum Sq"]] / results$total_ss * 100
+  ) %>% setnames(old = "type", new = type)
+}
+
+design <- ~ block + treatment
+
+# alphaEach(EXP$FUN$soil, "kingdom", "source", metrics, design, "experiment") |> print()
+
+exp_alpha_each  <- apply_to_subsets(EXP, alphaEach, metrics, design, "experiment")
+time_alpha_each <- apply_to_subsets(TIME, alphaEach, metrics, design, "timepoint")
+
+exp_alpha_each  |> combineTables() |> printTable("Experiment")
+time_alpha_each |> combineTables() |> printTable("Timepoint")
+
+combineTables(exp_alpha_each)[p < 0.05]
+combineTables(time_alpha_each)[p < 0.05]
+
+## EXP FUN root simpson & soil Chao1
+## EXP BAC root all & soil Chao1 Simpson
+## TIME BAC root Chao1 soil Chao1
+
+summariseAlphaEach <- function(data) {
+  combined_data <- combineTables(data)
+  combined_data$factor <- factor(combined_data$factor, levels = unique(combined_data$factor))
+  dt <- dcast(
+    combined_data,
+    kingdom + factor + df ~ source + metric + experiment,
+    value.var = c("var", "stars")
+  )
+  id_cols <- c("kingdom", "factor", "df")
+  all_cols <- setdiff(names(dt), id_cols)
+  base_cols <- unique(sub("^(var|stars)_", "", all_cols))
+  final_cols <- c(
+    id_cols,
+    as.vector(sapply(base_cols, function(x) c(paste0("var_", x), paste0("stars_", x))))
+  )
+  setcolorder(dt, final_cols)
+  dt
+}
+
+summariseAlphaEach(exp_alpha_each)  |> printTable("Experiment")
+summariseAlphaEach(time_alpha_each) |> printTable("Timepoint")
+
+
+alphaPostHocEach <- function(data, kingdom, source, metrics, type) {
+  # Split data
+  split_data <- split(data$alphaData, as.formula(paste("~", type)))
+  # Calculate ranks for each data split 
+  for (m in metrics) sapply(split_data, function(dt) dt[, (m) := rank(get(m))])
+  group_cols <- c("source", "experiment", "timepoint", "treatment")
+  # Summarise by treatment and reformat
+  rank_means <- lapply(split_data, function(dt) {
+    dt[, lapply(.SD, mean), by = group_cols, .SDcols = metrics] %>%
+      melt(id.vars = group_cols, measure_vars = metrics, variable.name = "metric") %>%
+      dcast(source + experiment + timepoint + metric ~ treatment, value.var = "value")
+  }) |> rbindlist()
+
+  data.table(
+    Kingdom    = kingdom,
+    Source     = rank_means$source,
+    Experiment = rank_means$experiment,
+    Timepoint  = rank_means$timepoint,
+    Metric     = rank_means$metric,
+    Trt_0      = rank_means$'0',
+    Trt_1      = rank_means$'1',
+    diff       = rank_means$'1' - rank_means$'0'
+  )
+}
+
+# alphaPostHocEach(EXP$FUN$soil, "FUN", "soil", metrics, "experiment") |> print()
+
+apply_to_subsets(EXP, alphaPostHocEach, metrics, "experiment") |> combineTables() |> printTable()
+apply_to_subsets(TIME, alphaPostHocEach, metrics, "timepoint") |> combineTables() |> printTable()
 
 ```
 
@@ -814,6 +1115,10 @@ time_da <- apply_to_subsets(TIME, diffAbundanceOverall, "timepoint")
 #   f = ~ kingdom
 # )
 
+# ASV count
+append(bind_rows(exp_da$FUN)$ASV, bind_rows(time_da$FUN)$ASV) |> unique() |> length()
+append(bind_rows(exp_da$BAC)$ASV, bind_rows(time_da$BAC)$ASV) |> unique() |> length()
+
 ```
 
 ### Differential abundance tables {.tabset}
@@ -821,25 +1126,25 @@ time_da <- apply_to_subsets(TIME, diffAbundanceOverall, "timepoint")
 #### EXP: FUN
 
 ```{r}
-exp_da$FUN |> combineTables() |> printTable()
+exp_da$FUN |> bind_rows() |> printTable()
 ```
 
 #### EXP: BAC
 
 ```{r}
-exp_da$BAC |> combineTables() |> printTable()
+exp_da$BAC |> bind_rows() |> printTable()
 ```
 
 #### TIME: FUN
 
 ```{r}
-time_da$FUN |> printTable()
+time_da$FUN |> bind_rows() |> printTable()
 ```
 
 #### TIME: BAC
 
 ```{r}
-time_da$BAC |> printTable()
+time_da$BAC |> bind_rows() |> printTable()
 ```
 
 ### Differential abundance subsets
@@ -946,8 +1251,8 @@ applyFunguilds <- function(data) {
   }, names(data), data)
 }
 
-applyFunguilds(exp_da_FUN)
-applyFunguilds(time_da_FUN)
+applyFunguilds(exp_da_FUN)#  |> printTable("Experiment")
+applyFunguilds(time_da_FUN)# |> printTable("Timepoint")
 
 
 ```
@@ -982,9 +1287,14 @@ apply_faprotaxit <- function(data, type) {
 # apply_faprotaxit(time_da$BAC, "time")
 
 
-faprotax <- list(
-  EXP = apply_faprotaxit(exp_da$BAC, "exp"),
-  TIME = apply_faprotaxit(time_da$BAC, "time")
-)
+# faprotax <- list(
+#   EXP = apply_faprotaxit(exp_da$BAC, "exp"),
+#   TIME = apply_faprotaxit(time_da$BAC, "time")
+# )
+
+# faprotax
+
+apply_faprotaxit(exp_da$BAC, "exp")#   |> printTable("Experiment")
+apply_faprotaxit(time_da$BAC, "time")# |> printTable("Timepoint")
 
 ```
