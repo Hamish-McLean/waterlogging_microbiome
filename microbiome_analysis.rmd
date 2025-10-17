@@ -826,10 +826,10 @@ time_bc |> printTable("Timepoint")
 #' @param nperm The number of permutations to use for adonis2.
 #' @return A list of the adonis2 results (data.tables) for each subset.
 #' 
-adonisPosthoc <- function(data, counts, simplified_formula, group_by_var, nperm = 1000) {
+adonisPostHoc <- function(data, kingdom, source, design, type, nperm = 1000) {
 
   # Split the data into a list of data.tables based on the grouping variable
-  split_data <- split(data, data[[group_by_var]])
+  split_data <- split(data$colData, as.formula(paste("~", type)))
 
   # Initialize a list to store the results
   adonis_results <- list()
@@ -839,40 +839,59 @@ adonisPosthoc <- function(data, counts, simplified_formula, group_by_var, nperm 
     subset_data <- split_data[[group_name]]
 
     # Subset the counts matrix to match the current metadata subset
-    subset_counts <- counts[, rownames(subset_data)]
+    subset_counts <- counts(data$dds, normalize = TRUE)[, rownames(subset_data)]
 
     # Calculate Bray-Curtis distances for the subset
-    bray_curtis_dist <- vegan::vegdist(t(subset_counts), method = "bray")
+    vg <- vegdist(t(subset_counts), method = "bray")
 
-    message(paste("Running adonis2 for", group_by_var, "=", group_name))
-
-    # Define the full formula for the subset model
-    # 'paste()' constructs new formula string like "bray_curtis_dist ~ treatment"
-    full_formula_str <- paste("bray_curtis_dist", as.character(simplified_formula)[2], sep = " ")
-    full_formula <- as.formula(full_formula_str)
+    message(paste("Running adonis2 for", type, group_name))
 
     # Run adonis2 on the subset
     model_result <- tryCatch({
       vegan::adonis2(
-        full_formula,
+        update(design, vg ~ .),
         data = subset_data,
         permutations = nperm,
         by = "terms"
       )
     }, error = function(e) {
-      warning(paste("Error running adonis2 for", group_by_var, "=", group_name, ":", e$message))
+      warning(paste("Error running adonis2 for", type, group_name, ":", e$message))
       NULL
     })
 
     # Convert the adonis2 output to a data.frame for easier handling and store it
     if (!is.null(model_result)) {
-      adonis_results[[group_name]] <- as.data.frame(model_result)
+      df <- as.data.frame(model_result)
+      total_ss <- df["Total", "SumOfSqs"]
+      # setDT(df, keep.rownames = "factor")
+      adonis_results[[group_name]] <- data.table(
+        kingdom = kingdom,
+        source  = source,
+        type    = group_name,
+        factor  = rownames(df),
+        df      = df$Df,
+        SS      = df$SumOfSqs,
+        R2      = df$R2,
+        F       = df$F,
+        P       = df$'Pr(>F)',
+        stars   = p_stars(df$'Pr(>F)'),
+        var     = df$SumOfSqs / total_ss * 100
+      ) %>% setnames(old = "type", new = type)
     }
   }
 
-  # Return the list of adonis2 results
-  return(adonis_results)
+  rbindlist(adonis_results)
 }
+
+design <- ~ block + treatment
+
+adonisPostHoc(EXP$FUN$soil, "FUN", "soil", design, "experiment")#
+
+exp_bc_each  <- apply_to_subsets(EXP, adonisPostHoc, design, "experiment")
+time_bc_each <- apply_to_subsets(TIME, adonisPostHoc, design, "timepoint")
+
+combineTables(exp_bc_each)[P < 0.05]
+combineTables(time_bc_each)[P < 0.05]
 
 ```
 
