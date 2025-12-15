@@ -451,6 +451,8 @@ alphaPostHoc(TIME$BAC$soil$alphaData, "simpson", formula(~ treatment + (1 | bloc
 
 metrics <- c("S.chao1", "shannon", "simpson")
 
+# aovp(update(E_DESIGN, rank(shannon) ~ .), EXP$FUN$soil$alphaData) |> summary()
+
 # alphaLM(EXP$FUN$soil, "FUN", "soil", metrics, E_DESIGN)
 
 exp_alpha <- apply_to_subsets(EXP, alphaLM, metrics, E_DESIGN)
@@ -985,6 +987,38 @@ apply_to_subsets(t_pca_lm, pcaLMVar) |> combineTables() |> printTable("Timepoint
 # # TIME PCA linear mixed model
 # apply_to_subsets(TIME, pcaLMM, T_DESIGN_M) |> combineTables() |> 
 #   filter(P <= 0.05 & factor != "(Intercept)") |> printTable()
+
+
+# First x PCs
+pcaSummary <- function(data, k, s, n_pcs) {
+  pcs <- paste0("PC", n_pcs)
+  subset <- data[pc %in% pcs]
+  subset[, stars := p_stars(P)]
+  subset[, factor := factor(factor, levels = unique(factor))]
+  dt <- dcast(
+    subset,
+    kingdom + source + factor + df ~ pc,
+    value.var = c("F", "P", "var_adj", "stars")
+  )
+  id_cols <- c("kingdom", "source", "factor", "df")
+  all_cols <- setdiff(names(dt), id_cols)
+  base_cols <- unique(sub("^(F|P|var_adj|stars)_", "", all_cols))
+  final_cols <- c(
+    id_cols,
+    as.vector(sapply(base_cols, function(x) c(
+      paste0("F_", x), paste0("P_", x), 
+      paste0("var_adj_", x), paste0("stars_", x)
+    )))
+  )
+  setcolorder(dt, final_cols)
+}
+
+# pcaSummary(e_pca_lm$FUN$soil, "k", "s", 1:3) |> print()
+
+pcs <- 1:4
+
+apply_to_subsets(e_pca_lm, pcaSummary, pcs) |> combineTables() |> printTable("Expeiriment")
+apply_to_subsets(t_pca_lm, pcaSummary, pcs) |> combineTables() |> printTable("Timepoint")
 
 ```
 
