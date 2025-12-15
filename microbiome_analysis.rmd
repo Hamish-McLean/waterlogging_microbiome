@@ -96,7 +96,7 @@ OBJECT_DIR  <- here("objects")
 PIPELINE    <- params$pipeline # DADA2 or USEARCH
 ASV_FILTER  <- 0.001 # ASV filter for removing low abundance ASVs
 READ_FILTER <- 0.05  # Read count filter for rarefaction
-TAX_CONF    <- 0.65  # Confidence threshold for taxonomic rank assignment
+TAX_CONF    <- 0.80  # Confidence threshold for taxonomic rank assignment
 SEED        <- 25647 # Random seed
 
 alpha_cache <- params$alpha_cache
@@ -1154,7 +1154,7 @@ TIME <- apply_to_subsets(TIME, deseqModel, t_design)
 
 # Differential abundance
 
-exp_da <- apply_to_subsets(EXP, diffAbundanceOverall, "experiment")
+exp_da  <- apply_to_subsets(EXP, diffAbundanceOverall, "experiment")
 time_da <- apply_to_subsets(TIME, diffAbundanceOverall, "timepoint")
 
 

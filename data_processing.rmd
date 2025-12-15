@@ -72,7 +72,7 @@ OBJECT_DIR  <- here("objects")
 PIPELINE    <- params$pipeline # DADA2 or USEARCH
 ASV_FILTER  <- 0.001 # ASV filter for removing low abundance ASVs
 READ_FILTER <- 0.05  # Read count filter for rarefaction
-TAX_CONF    <- 0.65  # Confidence threshold for taxonomic rank assignment
+TAX_CONF    <- 0.80  # Confidence threshold for taxonomic rank assignment
 SEED        <- 25647 # Random seed
 
 # Colour blind palette
@@ -293,6 +293,23 @@ BAC$countData <- BAC$countData[rownames(BAC$countData) %in% keep,]
 
 ```
 
+Filtered proportions
+
+```{r}
+
+proportions <- c(0.5, 0.9, 0.99, 0.999, 1)
+
+top_asvs <- data.table(
+  "proportion" = proportions,
+  "Fungi" = lapply(proportions, function(x) asv_propotions(FUN$countData, x)),
+  "Bacteria" = lapply(proportions, function(x) asv_propotions(BAC$countData, x))
+)
+
+top_asvs |> printTable()
+
+
+```
+
 ## Absolute abundance normalisation
 
 ASV normalisation is performed using qPCR theoretical copy number data.
@@ -394,7 +411,10 @@ create_dds <- function(data, name, source, design = ~ 1) {
 # EXP$BAC  <- apply_to_subsets(EXP$BAC, create_dds)
 # TIME$BAC <- apply_to_subsets(TIME$BAC, create_dds)
 
-EXP <- apply_to_subsets(EXP, create_dds)
+FUN  <- create_dds(FUN, "FUN", "all")
+BAC  <- create_dds(BAC, "BAC", "all")
+
+EXP  <- apply_to_subsets(EXP, create_dds)
 TIME <- apply_to_subsets(TIME, create_dds)
 
 ```
@@ -496,6 +516,7 @@ print_asv_summary <- function(data, title) {
 }
 
 print_asv_summary(EXP$FUN, "Fungi Experiment ASV Summary") |> printTable()
+print_asv_summary(EXP$BAC, "Bacteria Experiment ASV Summary") |> printTable()
 
 
 data.table(
@@ -523,8 +544,9 @@ top_asvs <- function(countData, taxData, n = 10) {
   )
 }
 
-top_asvs(FUN$countData, FUN$taxData, n = 10)
+# top_asvs(FUN$countData, FUN$taxData, n = 10)
 
+top_asvs(counts(FUN$dds, normalize = TRUE), FUN$taxData, n = 10)
 top_asvs(counts(BAC$dds, normalize = TRUE), BAC$taxData, n = 10)
 
 ```

@@ -384,21 +384,22 @@ diffAbundanceOverall <- function(data, kingdom, source, term) {
 
   # Combine into a data.table
   dt <- data.table(
-    kingdom = kingdom,
-    source = source,
-    ASV = rownames(res),
-    log2FC = res$log2FoldChange,
+    kingdom     = kingdom,
+    source      = source,
+    ASV         = rownames(res),
+    baseMean    = res$baseMean,
+    log2FC      = res$log2FoldChange,
     correlation = ifelse(res$log2FoldChange > 0, "positive", "negative"),
-    padj = res$padj,
-    sig = p_stars(res$padj),
-    taxa = data$taxData[rownames(res), ]$rank
+    padj        = res$padj,
+    sig         = p_stars(res$padj),
+    taxa        = data$taxData[rownames(res), ]$rank
   )
   
   # Filter for any significant result
   dt_filt <- dt[complete.cases(padj) & padj < 0.05]
 
-  # Optionally, sort by log2FC
-  dt_filt <- dt_filt[order(abs(log2FC), decreasing = TRUE)]
+  # Sort
+  dt_filt <- dt_filt[order(abs(baseMean), decreasing = TRUE)]
   
   return(dt_filt)
 }
