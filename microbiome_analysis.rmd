@@ -40,6 +40,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = TRU
 
 library(buildmer)
 library(car)
+library(ComplexHeatmap)
 library(cowplot)
 library(data.table)
 library(DESeq2)
@@ -58,6 +59,7 @@ library(partR2)
 library(patchwork)
 library(performance)
 library(permutes)
+library(ragg)
 library(rstatix)
 library(see)
 library(stringr)
@@ -1144,10 +1146,10 @@ deseqModel <- function(data, k, s, design) {
 # Overall treatment effect
 
 e_design <- ~ experiment/block  + treatment
-t_design <- ~ timepoint + block + treatment
+# t_design <- ~ timepoint + block + treatment
 
 EXP  <- apply_to_subsets(EXP,  deseqModel, e_design)
-TIME <- apply_to_subsets(TIME, deseqModel, t_design)
+# TIME <- apply_to_subsets(TIME, deseqModel, t_design)
 
 # resultsNames(EXP$FUN$soil$dds)
 
@@ -1155,7 +1157,13 @@ TIME <- apply_to_subsets(TIME, deseqModel, t_design)
 # Differential abundance
 
 exp_da  <- apply_to_subsets(EXP, diffAbundanceOverall, "experiment")
-time_da <- apply_to_subsets(TIME, diffAbundanceOverall, "timepoint")
+# time_da <- apply_to_subsets(TIME, diffAbundanceOverall, "timepoint")
+
+
+# Analysis per timepoint
+
+design <- ~ block + treatment
+time_da <- apply_to_subsets(TIME, diffAbundancePerTimepoint, design)
 
 
 # exp_da <- split(
@@ -1169,8 +1177,21 @@ time_da <- apply_to_subsets(TIME, diffAbundanceOverall, "timepoint")
 # )
 
 # ASV count
+cat("Total significant Fungal ASVs: ")
 append(bind_rows(exp_da$FUN)$ASV, bind_rows(time_da$FUN)$ASV) |> unique() |> length()
+
+cat("Total significant Bacterial ASVs: ")
 append(bind_rows(exp_da$BAC)$ASV, bind_rows(time_da$BAC)$ASV) |> unique() |> length()
+
+
+printDiffStats <- function(data, type) {
+  kingdom <- ifelse(type == "FUN", "Fungal", "Bacterial")
+  cat(
+    "", kingdom, "soil: ", length(data[[type]]$soil$ASV),
+    "\n", kingdom, "root: ", length(data[[type]]$root$ASV),
+    "\n", kingdom, "both: ", length(intersect(data[[type]]$soil$ASV, data[[type]]$root$ASV)), "\n"
+  )
+}
 
 ```
 
@@ -1179,24 +1200,28 @@ append(bind_rows(exp_da$BAC)$ASV, bind_rows(time_da$BAC)$ASV) |> unique() |> len
 #### EXP: FUN
 
 ```{r}
+printDiffStats(exp_da, "FUN")
 exp_da$FUN |> bind_rows() |> printTable()
 ```
 
 #### EXP: BAC
 
 ```{r}
+printDiffStats(exp_da, "BAC")
 exp_da$BAC |> bind_rows() |> printTable()
 ```
 
 #### TIME: FUN
 
 ```{r}
+printDiffStats(time_da, "FUN")
 time_da$FUN |> bind_rows() |> printTable()
 ```
 
 #### TIME: BAC
 
 ```{r}
+printDiffStats(time_da, "FUN")
 time_da$BAC |> bind_rows() |> printTable()
 ```
 
@@ -1204,23 +1229,217 @@ time_da$BAC |> bind_rows() |> printTable()
 
 ```{r}
 
-exp_da$FUN  |> select("taxa") |> table() |> as.data.table() |> printTable()
-time_da$FUN |> select("taxa") |> table() |> as.data.table() |> printTable()
+bind_rows(exp_da$FUN)  |> select("taxa") |> table() |> as.data.table() |> printTable()
+bind_rows(time_da$FUN) |> select("taxa") |> table() |> as.data.table() |> printTable()
 
-exp_da$FUN[grepl("Dactylonectria", taxa)] |> printTable()
-time_da$FUN[grepl("Pleosporales", taxa)]  |> printTable()
+bind_rows(exp_da$FUN)[grepl("Dactylonectria", taxa)] |> printTable()
+bind_rows(time_da$FUN)[grepl("Pleosporales", taxa)]  |> printTable()
 
 
-exp_da$BAC  |> select("taxa") |> table() |> as.data.table() |> printTable()
-time_da$BAC |> select("taxa") |> table() |> as.data.table() |> printTable()
+bind_rows(exp_da$BAC)  |> select("taxa") |> table() |> as.data.table() |> printTable()
+bind_rows(time_da$BAC) |> select("taxa") |> table() |> as.data.table() |> printTable()
 
-time_da$BAC[grepl("Oxalobacteraceae", taxa)] |> printTable()
+bind_rows(time_da$BAC)[grepl("Oxalobacteraceae", taxa)] |> printTable()
 
 ```
 
 The fungal taxa with multiple occurences (but different ASVs) had wildly different
 results.
 There were fewer bacteria with multiple occurences, but the results were more consistant.
+
+
+### Differential abundace at genus level
+
+- Filter dds by genus at 50% confidence
+- Group by genus
+- Run DESeq analysis on genus counts
+
+```{r}
+
+# Filter dds by genus at 50% confidence
+
+diffAbundanceGenus <- function(data, k, s, tax_conf = 0.5) {
+  # Filter ASVs with genus at ≥ 50% confidence
+  taxData <- data$taxData[data$taxData$g_conf >= tax_conf, ]
+  countData <- counts(data$dds)[rownames(taxData), ]
+
+  # Sum counts per genus
+  countData <- rowsum(countData, group = taxData$genus)
+
+  # Create dds object
+  dds <- DESeqDataSetFromMatrix(countData, data$colData, ~ 1)
+  sizeFactors(dds) <- sizeFactors(data$dds)
+  list(taxData = taxData, countData = countData, colData = data$colData, dds = dds)
+}
+
+# diffAbundanceGenus(EXP$FUN$soil, "FUN", "soil")
+
+EXP_genus  <- apply_to_subsets(EXP,  diffAbundanceGenus)
+TIME_genus <- apply_to_subsets(TIME, diffAbundanceGenus)
+
+e_design <- ~ experiment/block  + treatment
+EXP_genus <- apply_to_subsets(EXP_genus,  deseqModel, e_design)
+exp_genus_da  <- apply_to_subsets(EXP_genus, diffAbundanceOverall, "experiment")
+
+t_design <- ~ block + treatment
+time_genus_da <- apply_to_subsets(TIME_genus, diffAbundancePerTimepoint, t_design)
+
+
+
+```
+
+### Differential abundance at genus tables {.tabset}
+
+#### EXP: FUN
+
+```{r}
+printDiffStats(exp_genus_da, "FUN")
+exp_genus_da$FUN |> bind_rows() |> printTable()
+```
+
+#### EXP: BAC
+
+```{r}
+printDiffStats(exp_genus_da, "BAC")
+exp_genus_da$BAC |> bind_rows() |> printTable()
+```
+
+#### TIME: FUN
+
+```{r}
+printDiffStats(time_genus_da, "FUN")
+time_genus_da$FUN |> bind_rows() |> printTable()
+```
+
+#### TIME: BAC
+
+```{r}
+printDiffStats(time_genus_da, "BAC")
+time_genus_da$BAC |> bind_rows() |> printTable()
+```
+
+
+### Differential abundance plots
+
+Heatmaps of abundance of each significant ASV  in each sample
+
+```{r}
+
+
+
+# diffAbundanceHeatmap(EXP_genus$FUN$root, exp_genus_da$FUN$root$ASV, "experiment", FALSE, TRUE)
+
+# agg_png(here(FIGURES_DIR, "heatmap_test.png"), width = 22, height = 15, units = "cm")
+# diffAbundanceHeatmap(EXP$FUN$soil, exp_da$FUN$soil$ASV, "experiment", FALSE, FALSE) #|> draw()
+# dev.off()
+
+# agg_png(here(FIGURES_DIR, "genus_diff_BAC_root.png"), width = 20, height = 10, units = "cm")
+# diffAbundanceHeatmap(EXP_genus$BAC$root, exp_genus_da$BAC$root$ASV, "experiment", FALSE, TRUE) #|> draw()
+# dev.off()
+
+
+
+# agg_png(here(FIGURES_DIR, "heatmap_test.png"))
+# diffAbundanceHeatmap(TIME_genus$BAC$soil, time_genus_da$BAC$soil$ASV, "timepoint", FALSE, TRUE) #|> draw()
+# dev.off()
+
+
+
+#' @title Differential abundance heatmap
+#' 
+diffAbundanceHeatmapCombined <- function(data, ASVs, type, use_log1p = FALSE, genus = FALSE) {
+  # Verify input lists
+  stopifnot(is.list(data), all(c("soil","root") %in% names(data)))
+  stopifnot(is.list(ASVs), all(c("soil","root") %in% names(ASVs)))
+
+  # Prepare data for root and soil
+  dat <- lapply(names(data), function(source) {
+    # Filter dds matrix for ASVs
+    mat <- counts(data[[source]]$dds, normalize = TRUE)[ASVs[[source]]$ASV, ]
+    if (use_log1p) mat <- log1p(mat)
+    mat[mat == 0] <- NA # Set 0 to NA for grey
+    
+    # Columns
+    cd <- as.data.frame(data[[source]]$colData)[, c(type, "treatment", "block")]
+    cd$treatment <- ifelse(cd$treatment == 0, "Control", "Waterlogged")
+    cd$type <- paste(type, cd[[type]])
+    cd$source  <- source
+
+    # Sort
+    ord <- with(cd, order(treatment, type, block))
+    cd <- cd[ord, ]
+    mat <- mat[, ord]
+    colnames(mat) <- paste(cd$treatment, cd$type, cd$block, sep = "_")
+    
+    # Taxa
+    if (!genus){
+      tax <- data[[source]]$taxData[ASVs[[source]]$ASV, ]
+      tax$lab <- paste0(rownames(tax), " - ", tax$rank)
+      rownames(mat) <- tax$lab
+    }
+
+    list(mat = mat, cd = cd)
+  })
+  names(dat) <- names(data)
+
+  mat <- rbind(dat$soil$mat, dat$root$mat)
+  cd <- rbind(dat$soil$cd, dat$root$cd)
+
+  # print(ncol(mat))
+  # return(list(mat, cd))
+  
+  # Heatmap
+  row_split <- factor(
+    c(rep("soil", nrow(dat$soil$mat)), rep("root", nrow(dat$root$mat))), levels = c("soil", "root")
+  )
+  split <- interaction(cd[cd$source == "soil",]$type, cd[cd$source == "soil",]$treatment, sep = "\n", drop = TRUE)
+  # return(split)
+  ha <- HeatmapAnnotation(
+    Block = anno_text(cd[cd$source == "soil",]$block, rot = 0),
+    annotation_name_side = "left",
+    gp = gpar(col = NA)
+  )
+  ht <- Heatmap(
+    mat, viridis(2, option = "plasma"), "Abundance", 
+    top_annotation = ha,
+    column_split = split, 
+    # column_title_rot = 90, #column_title = NULL,
+    column_names_gp = gpar(fontsize = 10),
+    row_split = row_split,
+    row_names_gp = gpar(fontsize = 12),
+    # row_names_max_width = unit(10, "cm"),
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    show_column_names = FALSE,
+    # show_heatmap_legend = FALSE
+    heatmap_legend_param = list(
+      title = ifelse(use_log1p, "Abundance (log)", "Abundance"),
+      # at = c(min_pos, (min_pos+max_val)/2, max_val), # 3 ticks
+      direction = "horizontal"
+    ),
+  )
+  draw(ht, heatmap_legend_side = "bottom", padding = unit(c(2, 2, 2, 6), "mm"))
+}
+
+# Bacteria
+agg_png(here(FIGURES_DIR, "genus_diff_EXP_BAC.png"), width = 20, height = 10, units = "cm")
+diffAbundanceHeatmapCombined(EXP_genus$BAC, exp_genus_da$BAC, "experiment", TRUE, TRUE)
+dev.off()
+
+agg_png(here(FIGURES_DIR, "genus_diff_TIME_BAC.png"), width = 20, height = 15, units = "cm")
+diffAbundanceHeatmapCombined(TIME_genus$BAC, time_genus_da$BAC, "timepoint", TRUE, TRUE)
+dev.off()
+
+# Fungi
+agg_png(here(FIGURES_DIR, "genus_diff_EXP_FUN.png"), width = 20, height = 7, units = "cm")
+diffAbundanceHeatmapCombined(EXP_genus$FUN, exp_genus_da$FUN, "experiment", TRUE, TRUE)
+dev.off()
+
+agg_png(here(FIGURES_DIR, "genus_diff_TIME_FUN.png"), width = 20, height = 10, units = "cm")
+diffAbundanceHeatmapCombined(TIME_genus$FUN, time_genus_da$FUN, "timepoint", TRUE, TRUE)
+dev.off()
+
+```
+
 
 ## Functional analysis
 

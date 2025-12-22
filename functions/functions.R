@@ -376,6 +376,55 @@ diffAbundance <- function(data, kingdom, source, term) {
 }
 
 
+#' @title Differential abundance heatmap
+#' 
+diffAbundanceHeatmap <- function(data, ASVs, type, use_log1p = FALSE, genus = FALSE) {
+  # Filter dds matrix for ASVs
+  mat <- counts(data$dds, normalize = TRUE)[ASVs, ]
+  if (use_log1p) mat <- log1p(mat)
+  mat[mat == 0] <- NA # Set 0 to NA for grey
+  
+  # Columns
+  cd <- as.data.frame(data$colData)[, c(type, "treatment", "block")]
+  cd$treatment <- ifelse(cd$treatment == 0, "Control", "Waterlogged")
+  cd$type <- paste(type, cd[[type]])
+
+  # Sort
+  ord <- with(cd, order(treatment, type, block))
+  cd <- cd[ord, ]
+  mat <- mat[, ord]
+  
+  # Taxa
+  if (!genus){
+    tax <- data$taxData[ASVs, ]
+    tax$lab <- paste0(rownames(tax), " - ", tax$rank)
+    rownames(mat) <- tax$lab
+  }
+  
+  # Heatmap
+  split <- interaction(cd$type, cd$treatment, sep = "\n", drop = TRUE)
+  ha <- HeatmapAnnotation(
+    Block = anno_text(cd$block, rot = 0),
+    annotation_name_side = "left",
+    gp = gpar(col = NA)
+  )
+  ht <- Heatmap(
+    mat, viridis(2, option = "plasma"), "Abundance", 
+    top_annotation = ha, column_split = split, 
+    # column_title_rot = 90, #column_title = NULL, 
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    show_column_names = FALSE,
+    # show_heatmap_legend = FALSE
+    heatmap_legend_param = list(
+      title = ifelse(use_log1p, "Abundance (log)", "Abundance"),
+      # at = c(min_pos, (min_pos+max_val)/2, max_val), # 3 ticks
+      direction = "horizontal"
+    ),
+  )
+  draw(ht, heatmap_legend_side = "bottom")
+}
+
+
 #' @title DESeq differential abundance analysis
 #'
 diffAbundanceOverall <- function(data, kingdom, source, term) {
@@ -402,6 +451,49 @@ diffAbundanceOverall <- function(data, kingdom, source, term) {
   dt_filt <- dt_filt[order(abs(baseMean), decreasing = TRUE)]
   
   return(dt_filt)
+}
+
+
+#' @title DESeq differential abundance analysis per timepoint
+#' 
+diffAbundancePerTimepoint <- function(data, k, s, design) {
+  timepoints <- c("1", "2")
+  results_list <- list()
+  for (tp in timepoints) {
+    # Split dds by timepoint
+    dds <- data$dds[, colData(data$dds)$timepoint == tp]
+
+    # Ensure size factors are retained
+    sizeFactors(dds) <- sizeFactors(data$dds)[colData(data$dds)$timepoint == tp]
+
+    # Set design and run DESeq analysis
+    design(dds) <- design
+    dds <- DESeq(dds)
+
+    # Extract results for treatment contrast
+    results <- as.data.frame(results(dds, name = "treatment_1_vs_0"))
+
+    # Tidy results and add to list
+    results$stars <- p_stars(results$padj)
+    colnames(results) <- paste0("T", tp, "_", colnames(results))
+    setDT(results, keep.rownames = "ASV")
+    results_list[[tp]] <- results
+  }
+  # Merge
+  results <- merge(results_list[["1"]], results_list[["2"]], by = "ASV", all = TRUE)
+  
+  # Add columns
+  results[, source := s]
+  results[, baseMean := (T1_baseMean + T2_baseMean)/2]
+  results[, sig := fcase(
+    (T1_padj < 0.05 & T2_padj < 0.05), "Both",
+    T1_padj < 0.05, "T1",
+    T2_padj < 0.05, "T2"
+  )]
+  results[, taxa := data$taxData[ASV, ]$rank]
+
+  # Filter significant ASVs and sort
+  results[T1_padj < 0.05 | T2_padj < 0.05][order(-baseMean)]
 }
 
 
