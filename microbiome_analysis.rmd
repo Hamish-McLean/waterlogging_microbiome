@@ -1258,13 +1258,17 @@ There were fewer bacteria with multiple occurences, but the results were more co
 
 # Filter dds by genus at 50% confidence
 
-diffAbundanceGenus <- function(data, k, s, tax_conf = 0.5) {
-  # Filter ASVs with genus at ≥ 50% confidence
+diffAbundanceGenus <- function(data, k, s, sample_min = 4, tax_conf = 0.5) {
+  # Filter ASVs with genus at tax_conf confidence
   taxData <- data$taxData[data$taxData$g_conf >= tax_conf, ]
   countData <- counts(data$dds)[rownames(taxData), ]
 
   # Sum counts per genus
   countData <- rowsum(countData, group = taxData$genus)
+
+  # Filter Genera present in >= sample_min samples
+  countData <- countData[rowSums(countData > 0) >= sample_min, ]
+  taxData <- taxData[rownames(countData), ]
 
   # Create dds object
   dds <- DESeqDataSetFromMatrix(countData, data$colData, ~ 1)
