@@ -1270,6 +1270,10 @@ diffAbundanceGenus <- function(data, k, s, sample_min = 4, tax_conf = 0.5) {
   countData <- countData[rowSums(countData > 0) >= sample_min, ]
   taxData <- taxData[rownames(countData), ]
 
+  # Rename
+  rownames(countData) <- gsub("_sensu_stricto", "", rownames(countData))
+  taxData$genus <- gsub("_sensu_stricto", "", taxData$genus)
+
   # Create dds object
   dds <- DESeqDataSetFromMatrix(countData, data$colData, ~ 1)
   sizeFactors(dds) <- sizeFactors(data$dds)
@@ -1322,6 +1326,28 @@ printDiffStats(time_genus_da, "BAC")
 time_genus_da$BAC |> bind_rows() |> printTable()
 ```
 
+### Full taxonomies
+
+```{r}
+
+fullTaxa <- function(taxData, data) {
+  cols <- c("kingdom", "phylum", "class", "order", "family", "genus")
+  genera <- c(data$root$ASV, data$soil$ASV) |> unique()
+  as.data.table(taxData)[genus %in% genera, ..cols] |> unique()
+}
+
+
+bind_rows(
+  fullTaxa(FUN$taxData, exp_genus_da$FUN),
+  fullTaxa(FUN$taxData, time_genus_da$FUN)
+)[order(phylum, class, order, family), ] |> unique() |> printTable()
+
+bind_rows(
+  fullTaxa(BAC$taxData, exp_genus_da$BAC),
+  fullTaxa(BAC$taxData, time_genus_da$BAC)
+)[order(phylum, class, order, family), ] |> unique() |> printTable()
+
+```
 
 ### Differential abundance plots
 
