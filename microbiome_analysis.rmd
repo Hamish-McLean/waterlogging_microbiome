@@ -499,9 +499,9 @@ time_alpha <- list(
       singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "root", "simpson", T_DESIGN)
     ),
     soil = bind_rows(
-      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "soil", "S.chao1", T_DESIGN),
-      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "soil", "shannon", T_DESIGN),
-      singleAlphaLM(TIME$FUN$root$alphaData, "FUN", "soil", "simpson", T_DESIGN)
+      singleAlphaLM(TIME$FUN$soil$alphaData, "FUN", "soil", "S.chao1", T_DESIGN),
+      singleAlphaLM(TIME$FUN$soil$alphaData, "FUN", "soil", "shannon", T_DESIGN),
+      singleAlphaLM(TIME$FUN$soil$alphaData, "FUN", "soil", "simpson", T_DESIGN)
     )
   ),
   BAC = list(
@@ -511,9 +511,9 @@ time_alpha <- list(
       singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "root", "simpson", T_DESIGN)
     ),
     soil = bind_rows(
-      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "soil", "S.chao1", T_DESIGN),
-      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "soil", "shannon", T_DESIGN),
-      singleAlphaLM(TIME$BAC$root$alphaData, "BAC", "soil", "simpson", T_DESIGN)
+      singleAlphaLM(TIME$BAC$soil$alphaData, "BAC", "soil", "S.chao1", T_DESIGN),
+      singleAlphaLM(TIME$BAC$soil$alphaData, "BAC", "soil", "shannon", T_DESIGN),
+      singleAlphaLM(TIME$BAC$soil$alphaData, "BAC", "soil", "simpson", T_DESIGN)
     )
   )
 )
