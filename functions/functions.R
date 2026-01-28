@@ -504,18 +504,29 @@ diffAbundancePerTimepoint <- function(data, k, s, design) {
 #' @param filename A string representing the filename to save the plot
 #' @return A ggplot object of the NMDS plot
 #'
-nmdsPlot <- function(dds, shape, filename) {
+nmdsPlot <- function(dds, shape) {
   vg <- vegdist(t(counts(dds, normalize = T)), method = "bray")
   ord <- metaMDS(vg, trace=0)
+  
+  legend_title <- if (shape == "exp_year") {
+    "Experimental replicate"
+  } else if (shape == "treat_rep") {
+    "Waterlogging repetition"
+  } else {
+    shape
+  }
 
   plot <- plotOrd(
     scores(ord), 
     colData(dds), 
-    design = "treatment", 
+    design = "treat_label", 
     shape = shape, 
     alpha = 0.75, cbPalette = T
-  )
-  ggsave(filename, path = FIGURES_DIR)
+  ) + #labs(colour = "test", shape = NULL)
+    # scale_colour_manual("Trt", values = cbPalette[1:2])
+    guides(colour = guide_legend(title = "Treatment", title.position = "top", order = 1)) +
+    guides(shape = guide_legend(title = legend_title, title.position = "top", order = 2)) +
+    theme(plot.margin = margin(t = 20, r = 5, b = 5, l = 5))
   return(plot)
 }
 

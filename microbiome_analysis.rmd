@@ -47,6 +47,7 @@ library(DESeq2)
 library(dplyr)
 library(DT)
 library(emmeans)
+library(ggguides)
 library(ggpubr)
 library(gplots)
 library(gridExtra)
@@ -140,25 +141,28 @@ TIME <- readRDS(here(OBJECT_DIR, "TIME.rds"))
 
 ```{r copy number plots}
 
-copyNumberPlot <- function(data, x) {
+copyNumberPlot <- function(data, x, xlab = NULL) {
   ggboxplot(
     data,
     x = x,
     y = "log10_copy_number",
-    color = "weeks", 
+    color = "treat_label", 
     # fill = "weeks",
     add = c("jitter"),
     # jitter.color = "weeks",
     # jitter.alpha = 0.1,
     # jitter.width = 0.1,
     facet.by = c("type", "source"),
+    palette = cbPalette,
     scales = "free",
     legend = "bottom"
-    # palette = "jco"
   ) + labs(
-    x = x,
-    y = bquote(log[10] ~ "copy number")
-  )
+    x = ifelse(!is.null(xlab), xlab, x),
+    y = bquote(log[10] ~ "copy number"),
+    color = NULL
+  ) + 
+  rotate_x_text(20) 
+  #+ scale_color_viridis(discrete = TRUE, option = "D")
 }
 
 copy_number_combined <- rbind(
@@ -167,12 +171,19 @@ copy_number_combined <- rbind(
 )
 
 # Experiment
-copyNumberPlot(filter(copy_number_combined, timepoint == 1), "experiment")
+exp_cn_plot <- copyNumberPlot(filter(copy_number_combined, timepoint == 1), "exp_year", "Experimental replicate")
 ggsave(filename = "CN_EXP.png", path = FIGURES_DIR)
 
 # Timepoint
-copyNumberPlot(filter(copy_number_combined, experiment == 1), "timepoint")
+time_cn_plot <- copyNumberPlot(filter(copy_number_combined, experiment == 1), "treat_rep", "Waterlogging repetition")
 ggsave(filename = "CN_TIME.png", path = FIGURES_DIR)
+
+# Combined
+collect_legends(exp_cn_plot | time_cn_plot, position = "bottom") + plot_annotation(tag_levels = "A")
+ggsave(
+  filename = "CN_combined.png", path = FIGURES_DIR,
+  width = 22, height = 15, units = "cm"  
+)
 
 ```
 
@@ -750,41 +761,137 @@ apply_to_subsets(TIME, alphaPostHocEach, metrics, "timepoint") |> combineTables(
 
 measures <- c("Chao1", "Shannon", "Simpson")
 
-plotAlpha <- function(data, k, s, measures, design) {
+plotAlpha <- function(data, k, s, measures, design, xlab = NULL) {
   plot_alpha(
     data$countData, data$colData,
-    design = design, colour = "weeks",
-    measures = measures,
+    design = design, colour = "treat_label",
+    measures = measures, cbPalette = TRUE,
     type = "box"
-  ) + scale_colour_manual(values = cbPalette) +
+  ) + #scale_colour_manual(values = cbPalette) +
     # theme(axis.title.x = element_blank()) +
-    ggtitle(paste(k, ":", s))
+    ggtitle(paste0(ifelse(k == "FUN", "Fungi", "Bacteria"), ": ", s)) + 
+    labs(
+      x = ifelse(!is.null(xlab), xlab, design),
+      y = "α-diversity measure",
+      color = NULL
+    ) + 
+    # theme(legend.position = "none") +
+    theme(axis.text.x = element_text(angle = 40, vjust = 1, hjust = 1))
 }
 
-exp_alpha_plots <- apply_to_subsets(EXP, plotAlpha, measures, "experiment") |> unlist(FALSE)
+exp_alpha_plots <- apply_to_subsets(EXP, plotAlpha, measures, "exp_year", "Experimental replicate") |> unlist(FALSE)
 
 # ggarrange(exp_alpha_plots, ncol = 2, common.legend = TRUE, legend = "bottom")
 
-# plot_grid(
-#   plotlist = exp_alpha_plots,
-#   align = "h",
-#   ncol = 2
-# )
+exp_alpha_plot <- shared_legend(
+  exp_alpha_plots[[1]], exp_alpha_plots[[2]], 
+  exp_alpha_plots[[3]], exp_alpha_plots[[4]],
+  ncol = 2, position = "right"
+) |> plot_grid()
 
-(exp_alpha_plots[[1]] + exp_alpha_plots[[2]]) / (exp_alpha_plots[[3]] + exp_alpha_plots[[4]]) +
-  plot_layout(guides = "collect") & # Collect legends into a single common legend
-  theme(legend.position = "bottom") # Position the common legend
+# exp_alpha_plot <- collect_legends(
+#   (exp_alpha_plots[[1]] + exp_alpha_plots[[2]]) / 
+#   (exp_alpha_plots[[3]] + exp_alpha_plots[[4]]),
+#   position = "bottom"
+# )
 
 ggsave("alpha_EXP.png", path = FIGURES_DIR)
 
 
-time_alpha_plots <- apply_to_subsets(TIME, plotAlpha, measures, "timepoint") |> unlist(FALSE)
+time_alpha_plots <- apply_to_subsets(TIME, plotAlpha, measures, "treat_rep", "Waterlogging repetition") |> unlist(FALSE)
 
-(time_alpha_plots[[1]] + time_alpha_plots[[2]]) / (time_alpha_plots[[3]] + time_alpha_plots[[4]]) +
-  plot_layout(guides = "collect") & # Collect legends into a single common legend
-  theme(legend.position = "bottom") # Position the common legend
+time_alpha_plot <- shared_legend(
+  time_alpha_plots[[1]], time_alpha_plots[[2]], 
+  time_alpha_plots[[3]], time_alpha_plots[[4]],
+  ncol = 2, position = "right"
+) |> plot_grid()
+
+# time_alpha_plot <- collect_legends(
+#   (time_alpha_plots[[1]] + time_alpha_plots[[2]]) /
+#   (time_alpha_plots[[3]] + time_alpha_plots[[4]]),
+#   position = "bottom"
+# )
+  # plot_layout(guides = "collect") & # Collect legends into a single common legend
+  # theme(legend.position = "bottom") # Position the common legend
 
 ggsave("alpha_TIME.png", path = FIGURES_DIR)
+
+# Combined
+exp_alpha_plot / plot_spacer() / time_alpha_plot + 
+  plot_annotation(tag_levels = "A") +
+  plot_layout(heights = c(1, 0.05, 1))
+# collect_axes(exp_alpha_plot / time_alpha_plot) + plot_annotation(tag_levels = "A")
+# collect_legends(exp_alpha_plot / time_alpha_plot, position = "right") + plot_annotation(tag_levels = "A")
+
+ggsave(
+  filename = "alpha_combined.png", path = FIGURES_DIR,
+  width = 24, height = 28, units = "cm"  
+)
+
+```
+
+### Size & alpha plots
+
+```{r}
+
+cnAlphaPlot <- function(data, x, y, xlab = NULL, ylab = NULL) {
+  ggboxplot(
+    data,
+    x = x,
+    y = y,
+    color = "treat_label", 
+    # fill = "weeks",
+    # add = c("jitter"),
+    # jitter.color = "weeks",
+    # jitter.alpha = 0.1,
+    # jitter.width = 0.1,
+    facet.by = c("type", "source"),
+    palette = cbPalette,
+    scales = "free",
+    legend = "bottom"
+  ) + labs(
+    x = ifelse(!is.null(xlab), xlab, x),
+    y = ifelse(!is.null(ylab), ylab, y),
+    color = NULL
+  ) + 
+  rotate_x_text(20) 
+  #+ scale_color_viridis(discrete = TRUE, option = "D")
+}
+
+exp_cn_alpha <- bind_rows(
+  bind_rows(EXP$FUN$soil$alphaData, EXP$FUN$root$alphaData)[, type := "Fungi"],
+  bind_rows(EXP$BAC$soil$alphaData, EXP$BAC$root$alphaData)[, type := "Bacteria"]
+)
+
+time_cn_alpha <- bind_rows(
+  bind_rows(TIME$FUN$soil$alphaData, TIME$FUN$root$alphaData)[, type := "Fungi"],
+  bind_rows(TIME$BAC$soil$alphaData, TIME$BAC$root$alphaData)[, type := "Bacteria"]
+)
+
+exp_cn_alpha_plot <- ggarrange(
+  cnAlphaPlot(exp_cn_alpha, "exp_year", "log10_copy_number", "Experimental replicate", "log10 copy number"), #bquote(log[10] ~ "copy number")),
+  cnAlphaPlot(exp_cn_alpha, "exp_year", "S.chao1", "Experimental replicate", "Chao1"),
+  cnAlphaPlot(exp_cn_alpha, "exp_year", "shannon", "Experimental replicate", "Shannon"),
+  cnAlphaPlot(exp_cn_alpha, "exp_year", "simpson", "Experimental replicate", "Simpson"),
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+time_cn_alpha_plot <- ggarrange(
+  cnAlphaPlot(time_cn_alpha, "treat_rep", "log10_copy_number", "Waterlogging repetition", "log10 copy number"), #bquote(log[10] ~ "copy number")),
+  cnAlphaPlot(time_cn_alpha, "treat_rep", "S.chao1", "Waterlogging repetition", "Chao1"),
+  cnAlphaPlot(time_cn_alpha, "treat_rep", "shannon", "Waterlogging repetition", "Shannon"),
+  cnAlphaPlot(time_cn_alpha, "treat_rep", "simpson", "Waterlogging repetition", "Simpson"),
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+exp_cn_alpha_plot / time_cn_alpha_plot + plot_annotation(tag_levels = "A")
+
+ggsave(
+  filename = "cn_alpha_combined.png", path = FIGURES_DIR,
+  width = 20, height = 30, units = "cm"
+)
 
 ```
 
@@ -907,35 +1014,55 @@ set.seed(SEED)
 
 # Experiment
 
-nmds_exp_fun_root <- nmdsPlot(EXP$FUN$root$dds, shape = "experiment", filename = "NMDS_FUN_root_exp.png")
-nmds_exp_fun_soil <- nmdsPlot(EXP$FUN$soil$dds, shape = "experiment", filename = "NMDS_FUN_soil_exp.png")
-nmds_exp_bac_root <- nmdsPlot(EXP$BAC$root$dds, shape = "experiment", filename = "NMDS_BAC_root_exp.png")
-nmds_exp_bac_soil <- nmdsPlot(EXP$BAC$soil$dds, shape = "experiment", filename = "NMDS_BAC_soil_exp.png")
+exp_nmds_plots <- list(
+  nmdsPlot(EXP$FUN$root$dds, shape = "exp_year"),
+  nmdsPlot(EXP$FUN$soil$dds, shape = "exp_year"),
+  nmdsPlot(EXP$BAC$root$dds, shape = "exp_year"),
+  nmdsPlot(EXP$BAC$soil$dds, shape = "exp_year")
+)
 
 nmds_exp_combined <- ggarrange(
-  plotlist = list(nmds_exp_fun_root, nmds_exp_fun_soil, nmds_exp_bac_root, nmds_exp_bac_soil),
+  plotlist = exp_nmds_plots,
   common.legend = TRUE,
   legend = "bottom",
-  labels = c("Fungi: roots", "Fungi: soil", "Bacteria: roots", "Bacteria: soil")
+  labels = c("Fungi: roots", "Fungi: soil", "Bacteria: roots", "Bacteria: soil"),
+  font.label = list(size = 12, vjust = 1.5)
 )
-nmds_exp_combined
-ggsave("NMDS_exp.png", plot = nmds_exp_combined, path = FIGURES_DIR)
+
+# nmds_exp_combined
+ggsave("NMDS_exp.png", path = FIGURES_DIR)
 
 # Timepoint
 
-nmds_time_fun_root <- nmdsPlot(TIME$FUN$root$dds, shape = "timepoint", filename = "NMDS_FUN_root_time.png")
-nmds_time_fun_soil <- nmdsPlot(TIME$FUN$soil$dds, shape = "timepoint", filename = "NMDS_FUN_soil_time.png")
-nmds_time_bac_root <- nmdsPlot(TIME$BAC$root$dds, shape = "timepoint", filename = "NMDS_BAC_root_time.png")
-nmds_time_bac_soil <- nmdsPlot(TIME$BAC$soil$dds, shape = "timepoint", filename = "NMDS_BAC_soil_time.png")
+time_nmds_plots <- list(
+  nmdsPlot(TIME$FUN$root$dds, shape = "treat_rep"),
+  nmdsPlot(TIME$FUN$soil$dds, shape = "treat_rep"),
+  nmdsPlot(TIME$BAC$root$dds, shape = "treat_rep"),
+  nmdsPlot(TIME$BAC$soil$dds, shape = "treat_rep")
+)
 
 nmds_time_combined <- ggarrange(
-  plotlist = list(nmds_time_fun_root, nmds_time_fun_soil, nmds_time_bac_root, nmds_time_bac_soil),
+  plotlist = time_nmds_plots,
   common.legend = TRUE,
   legend = "bottom",
-  labels = c("Fungi: roots", "Fungi: soil", "Bacteria: roots", "Bacteria: soil")
+  labels = c("Fungi: roots", "Fungi: soil", "Bacteria: roots", "Bacteria: soil"),
+  font.label = list(size = 12, vjust = 1.5)
 )
-nmds_time_combined
+
+# nmds_time_combined
 ggsave("NMDS_time.png", plot = nmds_time_combined, path = FIGURES_DIR)
+
+
+# Combined
+collect_legends(nmds_exp_combined / plot_spacer() / nmds_time_combined) + 
+  plot_annotation(tag_levels = "A") +
+  plot_layout(heights = c(1, 0.01, 1))
+
+ggsave(
+  "NMDS_combined.png", path = FIGURES_DIR,
+  width = 20, height = 28, units = "cm"
+)
+
 
 ```
 

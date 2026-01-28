@@ -135,6 +135,20 @@ BAC$colData$exp_tp <- paste(BAC$colData$experiment, BAC$colData$timepoint, sep =
 FUN$colData$e_block <- paste(FUN$colData$experiment, FUN$colData$block, sep = "_")
 BAC$colData$e_block <- paste(BAC$colData$experiment, BAC$colData$block, sep = "_")
 
+# Add new column to colData to label treatments
+FUN$colData$treat_label <- ifelse(FUN$colData$treatment == 0, "Control", "Waterlogged")
+BAC$colData$treat_label <- ifelse(BAC$colData$treatment == 0, "Control", "Waterlogged")
+
+# Add new column to colData for experiment year
+FUN$colData$exp_year <- ifelse(FUN$colData$experiment == 1, "2022", "2023")
+BAC$colData$exp_year <- ifelse(BAC$colData$experiment == 1, "2022", "2023")
+
+# Add new column to colData for timepoint => treatment rep
+FUN$colData$treat_rep <- ifelse(FUN$colData$timepoint == 1, "Single", "Repeated")
+BAC$colData$treat_rep <- ifelse(BAC$colData$timepoint == 1, "Single", "Repeated")
+FUN$colData$treat_rep <- factor(FUN$colData$treat_rep, levels = c("Single", "Repeated"))
+BAC$colData$treat_rep <- factor(BAC$colData$treat_rep, levels = c("Single", "Repeated"))
+
 # Convert all columns to factors
 FUN$colData[] <- lapply(FUN$colData, as.factor)
 BAC$colData[] <- lapply(BAC$colData, as.factor)
