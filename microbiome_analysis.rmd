@@ -1563,7 +1563,7 @@ diffAbundanceHeatmapCombined <- function(data, ASVs, type, use_log1p = FALSE, ge
     # column_title_rot = 90, #column_title = NULL,
     column_names_gp = gpar(fontsize = 10),
     row_split = row_split,
-    row_names_gp = gpar(fontsize = 12),
+    row_names_gp = gpar(fontsize = 12, fontface = "italic"),
     # row_names_max_width = unit(10, "cm"),
     cluster_rows = FALSE, cluster_columns = FALSE,
     show_column_names = FALSE,
@@ -1574,26 +1574,49 @@ diffAbundanceHeatmapCombined <- function(data, ASVs, type, use_log1p = FALSE, ge
       direction = "horizontal"
     ),
   )
-  draw(ht, heatmap_legend_side = "bottom", padding = unit(c(2, 2, 2, 6), "mm"))
+  # draw(ht, heatmap_legend_side = "bottom", padding = unit(c(2, 2, 2, 6), "mm"))
+  grid.grabExpr(draw(ht, heatmap_legend_side = "bottom"))
 }
 
-# Bacteria
-agg_png(here(FIGURES_DIR, "genus_diff_EXP_BAC.png"), width = 20, height = 10, units = "cm")
-diffAbundanceHeatmapCombined(EXP_genus$BAC, exp_genus_da$BAC, "experiment", TRUE, TRUE)
+# Combined plots
+
+exp_fun_genus_plot <- diffAbundanceHeatmapCombined(EXP_genus$FUN, exp_genus_da$FUN, "experiment", TRUE, TRUE)
+exp_bac_genus_plot <- diffAbundanceHeatmapCombined(EXP_genus$BAC, exp_genus_da$BAC, "experiment", TRUE, TRUE)
+
+agg_png(here(FIGURES_DIR, "genus_diff_EXP.png"), width = 20, height = 18, units = "cm")
+wrap_elements(exp_fun_genus_plot) / wrap_elements(exp_bac_genus_plot) +
+  plot_annotation(tag_levels = "A") + 
+  plot_layout(heights = c(2, 4))
 dev.off()
 
-agg_png(here(FIGURES_DIR, "genus_diff_TIME_BAC.png"), width = 20, height = 15, units = "cm")
-diffAbundanceHeatmapCombined(TIME_genus$BAC, time_genus_da$BAC, "timepoint", TRUE, TRUE)
+
+time_fun_genus_plot <- diffAbundanceHeatmapCombined(TIME_genus$FUN, time_genus_da$FUN, "timepoint", TRUE, TRUE)
+time_bac_genus_plot <- diffAbundanceHeatmapCombined(TIME_genus$BAC, time_genus_da$BAC, "timepoint", TRUE, TRUE)
+
+agg_png(here(FIGURES_DIR, "genus_diff_TIME.png"), width = 20, height = 25, units = "cm")
+wrap_elements(time_fun_genus_plot) / wrap_elements(time_bac_genus_plot) +
+  plot_annotation(tag_levels = "A") + 
+  plot_layout(heights = c(3, 4))
 dev.off()
 
-# Fungi
-agg_png(here(FIGURES_DIR, "genus_diff_EXP_FUN.png"), width = 20, height = 7, units = "cm")
-diffAbundanceHeatmapCombined(EXP_genus$FUN, exp_genus_da$FUN, "experiment", TRUE, TRUE)
-dev.off()
 
-agg_png(here(FIGURES_DIR, "genus_diff_TIME_FUN.png"), width = 20, height = 10, units = "cm")
-diffAbundanceHeatmapCombined(TIME_genus$FUN, time_genus_da$FUN, "timepoint", TRUE, TRUE)
-dev.off()
+# # Bacteria
+# agg_png(here(FIGURES_DIR, "genus_diff_EXP_BAC.png"), width = 20, height = 10, units = "cm")
+# diffAbundanceHeatmapCombined(EXP_genus$BAC, exp_genus_da$BAC, "experiment", TRUE, TRUE)
+# dev.off()
+
+# agg_png(here(FIGURES_DIR, "genus_diff_TIME_BAC.png"), width = 20, height = 15, units = "cm")
+# diffAbundanceHeatmapCombined(TIME_genus$BAC, time_genus_da$BAC, "timepoint", TRUE, TRUE)
+# dev.off()
+
+# # Fungi
+# agg_png(here(FIGURES_DIR, "genus_diff_EXP_FUN.png"), width = 20, height = 7, units = "cm")
+# diffAbundanceHeatmapCombined(EXP_genus$FUN, exp_genus_da$FUN, "experiment", TRUE, TRUE)
+# dev.off()
+
+# agg_png(here(FIGURES_DIR, "genus_diff_TIME_FUN.png"), width = 20, height = 10, units = "cm")
+# diffAbundanceHeatmapCombined(TIME_genus$FUN, time_genus_da$FUN, "timepoint", TRUE, TRUE)
+# dev.off()
 
 ```
 
